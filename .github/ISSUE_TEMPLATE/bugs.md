@@ -1,6 +1,6 @@
 ---
 name: "🐛 Bugs / Unexpected behaviors"
-about: Please report unexpected behaviors or bugs in PyTorch3d.
+about: Please report unexpected behaviors or bugs in PyTorch3D.
 
 ---
 
@@ -9,6 +9,8 @@ post according to this template:
 
 ## 🐛 Bugs / Unexpected behaviors
 <!-- A clear and concise description of the issue -->
+
+NOTE: Please look at the existing list of Issues tagged with the label ['bug`](https://github.com/facebookresearch/pytorch3d/issues?q=label%3Abug). **Only open a new issue if this bug has not already been reported. If an issue already exists, please comment there instead.**.
 
 ## Instructions To Reproduce the Issue:
 

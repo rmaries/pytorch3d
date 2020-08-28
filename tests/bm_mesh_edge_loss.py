@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 from itertools import product
-from fvcore.common.benchmark import benchmark
 
+from fvcore.common.benchmark import benchmark
 from test_mesh_edge_loss import TestMeshEdgeLoss
 
 
@@ -18,8 +17,5 @@ def bm_mesh_edge_loss() -> None:
         n, v, f = case
         kwargs_list.append({"num_meshes": n, "max_v": v, "max_f": f})
     benchmark(
-        TestMeshEdgeLoss.mesh_edge_loss,
-        "MESH_EDGE_LOSS",
-        kwargs_list,
-        warmup_iters=1,
+        TestMeshEdgeLoss.mesh_edge_loss, "MESH_EDGE_LOSS", kwargs_list, warmup_iters=1
     )

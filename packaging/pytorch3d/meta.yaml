@@ -19,14 +19,13 @@ requirements:
   run:
     - python
     - numpy >=1.11
-    - six
     - torchvision >=0.5
     - fvcore
     {{ environ.get('CONDA_PYTORCH_CONSTRAINT') }}
     {{ environ.get('CONDA_CUDATOOLKIT_CONSTRAINT') }}
 
 build:
-  string: py{{py}}_{{ environ['CU_VERSION'] }}
+  string: py{{py}}_{{ environ['CU_VERSION'] }}_pyt{{ environ['PYTORCH_VERSION_NODOT']}}
   script: python setup.py install --single-version-externally-managed --record=record.txt # [not win]
   script_env:
     - CUDA_HOME
@@ -42,12 +41,7 @@ test:
     - tests
     - docs
   requires:
-    - pytest
-    - scipy
-    - mock
-    - av
     - ca-certificates
-    - typing
   commands:
     #pytest .
     python -m unittest discover -v -s tests

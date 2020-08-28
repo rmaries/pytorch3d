@@ -1,6 +1,8 @@
 // Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 #include <ATen/ATen.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <tuple>
 
 template <typename scalar_t>
@@ -213,22 +215,37 @@ std::tuple<at::Tensor, at::Tensor> FaceAreasNormalsForwardCuda(
   const auto V = verts.size(0);
   const auto F = faces.size(0);
 
+  // Check inputs are on the same device
+  at::TensorArg verts_t{verts, "verts", 1}, faces_t{faces, "faces", 2};
+  at::CheckedFrom c = "FaceAreasNormalsForwardCuda";
+  at::checkAllSameGPU(c, {verts_t, faces_t});
+
+  // Set the device for the kernel launch based on the device of verts
+  at::cuda::CUDAGuard device_guard(verts.device());
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
   at::Tensor areas = at::empty({F}, verts.options());
   at::Tensor normals = at::empty({F, 3}, verts.options());
 
+  if (areas.numel() == 0) {
+    AT_CUDA_CHECK(cudaGetLastError());
+    return std::make_tuple(areas, normals);
+  }
+
   const int blocks = 64;
   const int threads = 512;
+
   AT_DISPATCH_FLOATING_TYPES(
-      verts.type(), "face_areas_normals_forward_cuda", ([&] {
-        FaceAreasNormalsForwardKernel<scalar_t><<<blocks, threads>>>(
-            verts.data_ptr<scalar_t>(),
-            faces.data_ptr<int64_t>(),
+      verts.scalar_type(), "face_areas_normals_forward_cuda", ([&] {
+        FaceAreasNormalsForwardKernel<scalar_t><<<blocks, threads, 0, stream>>>(
+            verts.contiguous().data_ptr<scalar_t>(),
+            faces.contiguous().data_ptr<int64_t>(),
             areas.data_ptr<scalar_t>(),
             normals.data_ptr<scalar_t>(),
             V,
             F);
       }));
-
+  AT_CUDA_CHECK(cudaGetLastError());
   return std::make_tuple(areas, normals);
 }
 
@@ -237,23 +254,40 @@ at::Tensor FaceAreasNormalsBackwardCuda(
     const at::Tensor grad_normals,
     const at::Tensor verts,
     const at::Tensor faces) {
+  // Check inputs are on the same device
+  at::TensorArg verts_t{verts, "verts", 1}, faces_t{faces, "faces", 2},
+      grad_areas_t{grad_areas, "grad_areas", 3},
+      grad_normals_t{grad_normals, "grad_normals", 4};
+  at::CheckedFrom c = "FaceAreasNormalsBackwardCuda";
+  at::checkAllSameGPU(c, {verts_t, faces_t, grad_areas_t, grad_normals_t});
+
+  // Set the device for the kernel launch based on the device of verts
+  at::cuda::CUDAGuard device_guard(verts.device());
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
   const auto V = verts.size(0);
   const auto F = faces.size(0);
 
   at::Tensor grad_verts = at::zeros({V, 3}, grad_areas.options());
 
+  if (grad_verts.numel() == 0) {
+    AT_CUDA_CHECK(cudaGetLastError());
+    return grad_verts;
+  }
+
   const int blocks = 64;
   const int threads = 512;
   // TODO(gkioxari) add AT_DISPATCH_FLOATING_TYPES once atomicAdd supports
   // doubles. Currently, support is for floats only.
-  FaceAreasNormalsBackwardKernel<<<blocks, threads>>>(
-      grad_areas.data_ptr<float>(),
-      grad_normals.data_ptr<float>(),
-      verts.data_ptr<float>(),
-      faces.data_ptr<int64_t>(),
+  FaceAreasNormalsBackwardKernel<<<blocks, threads, 0, stream>>>(
+      grad_areas.contiguous().data_ptr<float>(),
+      grad_normals.contiguous().data_ptr<float>(),
+      verts.contiguous().data_ptr<float>(),
+      faces.contiguous().data_ptr<int64_t>(),
       grad_verts.data_ptr<float>(),
       V,
       F);
 
+  AT_CUDA_CHECK(cudaGetLastError());
   return grad_verts;
 }

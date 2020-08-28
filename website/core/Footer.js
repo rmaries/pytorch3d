@@ -16,7 +16,7 @@ function SocialFooter(props) {
           data-count-href={`${repoUrl}/stargazers`}
           data-show-count="true"
           data-count-aria-label="# stargazers on GitHub"
-          aria-label="Star PyTorch3d on GitHub"
+          aria-label="Star PyTorch3D on GitHub"
         >
           {props.config.projectName}
         </a>
@@ -63,7 +63,22 @@ class Footer extends React.Component {
             height="45"
           />
         </a>
-        <section className="copyright">{this.props.config.copyright}</section>
+        <section className="copyright">{this.props.config.copyright}
+          <br/>
+          Legal:
+          <a
+            href="https://opensource.facebook.com/legal/privacy/"
+            target="_blank"
+            rel="noreferrer noopener">
+            Privacy
+          </a>
+          <a
+            href="https://opensource.facebook.com/legal/terms/"
+            target="_blank"
+            rel="noreferrer noopener">
+            Terms
+          </a>
+        </section>
       </footer>
     );
   }

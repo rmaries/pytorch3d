@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 import functools
 from typing import Optional
+
 import torch
+import torch.nn.functional as F
 
 
 """
@@ -156,9 +157,7 @@ def euler_angles_to_matrix(euler_angles, convention: str):
     for letter in convention:
         if letter not in ("X", "Y", "Z"):
             raise ValueError(f"Invalid letter {letter} in convention string.")
-    matrices = map(
-        _axis_angle_rotation, convention, torch.unbind(euler_angles, -1)
-    )
+    matrices = map(_axis_angle_rotation, convention, torch.unbind(euler_angles, -1))
     return functools.reduce(torch.matmul, matrices)
 
 
@@ -247,17 +246,14 @@ def matrix_to_euler_angles(matrix, convention: str):
 
 
 def random_quaternions(
-    n: int,
-    dtype: Optional[torch.dtype] = None,
-    device=None,
-    requires_grad=False,
+    n: int, dtype: Optional[torch.dtype] = None, device=None, requires_grad=False
 ):
     """
     Generate random quaternions representing rotations,
     i.e. versors with nonnegative real part.
 
     Args:
-        n: Number to return.
+        n: Number of quaternions in a batch to return.
         dtype: Type to return.
         device: Desired device of returned tensor. Default:
             uses the current device for the default tensor type.
@@ -267,25 +263,20 @@ def random_quaternions(
     Returns:
         Quaternions as tensor of shape (N, 4).
     """
-    o = torch.randn(
-        (n, 4), dtype=dtype, device=device, requires_grad=requires_grad
-    )
+    o = torch.randn((n, 4), dtype=dtype, device=device, requires_grad=requires_grad)
     s = (o * o).sum(1)
     o = o / _copysign(torch.sqrt(s), o[:, 0])[:, None]
     return o
 
 
 def random_rotations(
-    n: int,
-    dtype: Optional[torch.dtype] = None,
-    device=None,
-    requires_grad=False,
+    n: int, dtype: Optional[torch.dtype] = None, device=None, requires_grad=False
 ):
     """
     Generate random rotations as 3x3 rotation matrices.
 
     Args:
-        n: Number to return.
+        n: Number of rotation matrices in a batch to return.
         dtype: Type to return.
         device: Device of returned tensor. Default: if None,
             uses the current device for the default tensor type.
@@ -410,3 +401,45 @@ def quaternion_apply(quaternion, point):
         quaternion_invert(quaternion),
     )
     return out[..., 1:]
+
+
+def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    using Gram--Schmidt orthogonalisation per Section B of [1].
+    Args:
+        d6: 6D rotation representation, of size (*, 6)
+
+    Returns:
+        batch of rotation matrices of size (*, 3, 3)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = F.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+    b2 = F.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
+
+
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Converts rotation matrices to 6D rotation representation by Zhou et al. [1]
+    by dropping the last row. Note that 6D representation is not unique.
+    Args:
+        matrix: batch of rotation matrices of size (*, 3, 3)
+
+    Returns:
+        6D rotation representation, of size (*, 6)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+    return matrix[..., :2, :].clone().reshape(*matrix.size()[:-2], 6)

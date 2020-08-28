@@ -1,13 +1,13 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 import torch
 import torch.nn as nn
+
+# pyre-fixme[21]: Could not find name `_C` in `pytorch3d`.
+from pytorch3d import _C
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
-
-from pytorch3d import _C
 
 
 class GraphConv(nn.Module):
@@ -37,6 +37,7 @@ class GraphConv(nn.Module):
         if init == "normal":
             nn.init.normal_(self.w0.weight, mean=0, std=0.01)
             nn.init.normal_(self.w1.weight, mean=0, std=0.01)
+            # pyre-fixme[16]: Optional type has no attribute `data`.
             self.w0.bias.data.zero_()
             self.w1.bias.data.zero_()
         elif init == "zero":
@@ -61,12 +62,10 @@ class GraphConv(nn.Module):
             number of output features per vertex.
         """
         if verts.is_cuda != edges.is_cuda:
-            raise ValueError(
-                "verts and edges tensors must be on the same device."
-            )
+            raise ValueError("verts and edges tensors must be on the same device.")
         if verts.shape[0] == 0:
             # empty graph.
-            return verts.sum() * 0.0
+            return verts.new_zeros((0, self.output_dim)) * verts.sum()
 
         verts_w0 = self.w0(verts)  # (V, output_dim)
         verts_w1 = self.w1(verts)  # (V, output_dim)
@@ -119,6 +118,7 @@ def gather_scatter_python(input, edges, directed: bool = False):
     idx0 = edges[:, 0].view(num_edges, 1).expand(num_edges, input_feature_dim)
     idx1 = edges[:, 1].view(num_edges, 1).expand(num_edges, input_feature_dim)
 
+    # pyre-fixme[16]: `Tensor` has no attribute `scatter_add`.
     output = output.scatter_add(0, idx0, input.gather(0, idx1))
     if not directed:
         output = output.scatter_add(0, idx1, input.gather(0, idx0))
@@ -171,4 +171,5 @@ class GatherScatter(Function):
         return grad_input, grad_edges, grad_directed
 
 
+# pyre-fixme[16]: `GatherScatter` has no attribute `apply`.
 gather_scatter = GatherScatter.apply

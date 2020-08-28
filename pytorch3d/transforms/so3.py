@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 import torch
+
 
 HAT_INV_SKEW_SYMMETRIC_TOL = 1e-5
 
@@ -10,7 +10,7 @@ HAT_INV_SKEW_SYMMETRIC_TOL = 1e-5
 def so3_relative_angle(R1, R2, cos_angle: bool = False):
     """
     Calculates the relative angle (in radians) between pairs of
-    rotation matrices `R1` and `R2` with `angle = acos(0.5 * Trace(R1 R2^T)-1)`
+    rotation matrices `R1` and `R2` with `angle = acos(0.5 * (Trace(R1 R2^T)-1))`
 
     .. note::
         This corresponds to a geodesic distance on the 3D manifold of rotation
@@ -66,9 +66,7 @@ def so3_rotation_angle(R, eps: float = 1e-4, cos_angle: bool = False):
     rot_trace = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
 
     if ((rot_trace < -1.0 - eps) + (rot_trace > 3.0 + eps)).any():
-        raise ValueError(
-            "A matrix has trace outside valid range [-1-eps,3+eps]."
-        )
+        raise ValueError("A matrix has trace outside valid range [-1-eps,3+eps].")
 
     # clamp to valid range
     rot_trace = torch.clamp(rot_trace, -1.0, 3.0)
@@ -79,6 +77,7 @@ def so3_rotation_angle(R, eps: float = 1e-4, cos_angle: bool = False):
     if cos_angle:
         return phi
     else:
+        # pyre-fixme[16]: `float` has no attribute `acos`.
         return phi.acos()
 
 
@@ -120,6 +119,7 @@ def so3_exponential_map(log_rot, eps: float = 0.0001):
     skews = hat(log_rot)
 
     R = (
+        # pyre-fixme[16]: `float` has no attribute `__getitem__`.
         fac1[:, None, None] * skews
         + fac2[:, None, None] * torch.bmm(skews, skews)
         + torch.eye(3, dtype=log_rot.dtype, device=log_rot.device)[None]
@@ -154,11 +154,14 @@ def so3_log_map(R, eps: float = 0.0001):
 
     phi = so3_rotation_angle(R)
 
-    phi_valid = torch.clamp(phi.abs(), eps) * phi.sign()
+    phi_sin = phi.sin()
 
-    log_rot_hat = (phi_valid / (2.0 * phi_valid.sin()))[:, None, None] * (
-        R - R.permute(0, 2, 1)
+    phi_denom = (
+        torch.clamp(phi_sin.abs(), eps) * phi_sin.sign()
+        + (phi_sin == 0).type_as(phi) * eps
     )
+
+    log_rot_hat = (phi / (2.0 * phi_denom))[:, None, None] * (R - R.permute(0, 2, 1))
     log_rot = hat_inv(log_rot_hat)
 
     return log_rot

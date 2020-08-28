@@ -1,11 +1,13 @@
 ---
 name: "\U0001F680 Feature Request"
-about: Submit a proposal/request for a new PyTorch3d feature
+about: Submit a proposal/request for a new PyTorch3D feature
 
 ---
 
 ## 🚀 Feature
 <!-- A clear and concise description of the feature proposal -->
+
+NOTE: Please look at the existing list of Issues tagged with the label ['enhancement`](https://github.com/facebookresearch/pytorch3d/issues?q=label%3Aenhancement). **Only open a new issue if you do not see your feature request there**.
 
 ## Motivation
 

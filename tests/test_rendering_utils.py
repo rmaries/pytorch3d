@@ -1,13 +1,12 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 import unittest
+
+import numpy as np
 import torch
-
-from pytorch3d.renderer.utils import TensorProperties
-
 from common_testing import TestCaseMixin
+from pytorch3d.renderer.utils import TensorProperties
 
 
 # Example class for testing
@@ -62,3 +61,24 @@ class TestTensorProperties(TestCaseMixin, unittest.TestCase):
         example = TensorPropertiesTestClass(x=(), y=())
         self.assertTrue(len(example) == 0)
         self.assertTrue(example.isempty())
+
+    def test_gather_props(self):
+        N = 4
+        x = torch.randn((N, 3, 4))
+        y = torch.randn((N, 5))
+        test_class = TensorPropertiesTestClass(x=x, y=y)
+
+        S = 15
+        idx = torch.tensor(np.random.choice(N, S))
+        test_class_gathered = test_class.gather_props(idx)
+
+        self.assertTrue(test_class_gathered.x.shape == (S, 3, 4))
+        self.assertTrue(test_class_gathered.y.shape == (S, 5))
+
+        for i in range(N):
+            inds = idx == i
+            if inds.sum() > 0:
+                # Check the gathered points in the output have the same value from
+                # the input.
+                self.assertClose(test_class_gathered.x[inds].mean(dim=0), x[i, ...])
+                self.assertClose(test_class_gathered.y[inds].mean(dim=0), y[i, ...])

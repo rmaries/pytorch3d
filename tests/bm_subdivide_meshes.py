@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 from itertools import product
-from fvcore.common.benchmark import benchmark
 
+from fvcore.common.benchmark import benchmark
 from test_subdivide_meshes import TestSubdivideMeshes
 
 

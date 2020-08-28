@@ -1,24 +1,20 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 import unittest
+
 import torch
 import torch.nn as nn
-
+from common_testing import TestCaseMixin, get_random_cuda_device
 from pytorch3d import _C
-from pytorch3d.ops.graph_conv import (
-    GraphConv,
-    gather_scatter,
-    gather_scatter_python,
-)
+from pytorch3d.ops.graph_conv import GraphConv, gather_scatter, gather_scatter_python
 from pytorch3d.structures.meshes import Meshes
 from pytorch3d.utils import ico_sphere
 
 
-class TestGraphConv(unittest.TestCase):
+class TestGraphConv(TestCaseMixin, unittest.TestCase):
     def test_undirected(self):
         dtype = torch.float32
-        device = torch.device("cuda:0")
+        device = get_random_cuda_device()
         verts = torch.tensor(
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=dtype, device=device
         )
@@ -43,7 +39,7 @@ class TestGraphConv(unittest.TestCase):
         conv.w1.bias.data.zero_()
 
         y = conv(verts, edges)
-        self.assertTrue(torch.allclose(y, expected_y))
+        self.assertClose(y, expected_y)
 
     def test_no_edges(self):
         dtype = torch.float32
@@ -58,19 +54,26 @@ class TestGraphConv(unittest.TestCase):
         conv.w0.bias.data.zero_()
 
         y = conv(verts, edges)
-        self.assertTrue(torch.allclose(y, expected_y))
+        self.assertClose(y, expected_y)
 
     def test_no_verts_and_edges(self):
         dtype = torch.float32
         verts = torch.tensor([], dtype=dtype, requires_grad=True)
         edges = torch.tensor([], dtype=dtype)
         w0 = torch.tensor([[1, -1, -2]], dtype=dtype)
+
         conv = GraphConv(3, 1).to(dtype)
         conv.w0.weight.data.copy_(w0)
         conv.w0.bias.data.zero_()
-
         y = conv(verts, edges)
-        self.assertTrue(torch.allclose(y, torch.tensor([])))
+        self.assertClose(y, torch.zeros((0, 1)))
+        self.assertTrue(y.requires_grad)
+
+        conv2 = GraphConv(3, 2).to(dtype)
+        conv2.w0.weight.data.copy_(w0.repeat(2, 1))
+        conv2.w0.bias.data.zero_()
+        y = conv2(verts, edges)
+        self.assertClose(y, torch.zeros((0, 2)))
         self.assertTrue(y.requires_grad)
 
     def test_directed(self):
@@ -81,8 +84,7 @@ class TestGraphConv(unittest.TestCase):
         w1 = torch.tensor([[-1, -1, -1]], dtype=dtype)
 
         expected_y = torch.tensor(
-            [[1 + 2 + 3 - 4 - 5 - 6 - 7 - 8 - 9], [4 + 5 + 6], [7 + 8 + 9]],
-            dtype=dtype,
+            [[1 + 2 + 3 - 4 - 5 - 6 - 7 - 8 - 9], [4 + 5 + 6], [7 + 8 + 9]], dtype=dtype
         )
 
         conv = GraphConv(3, 1, directed=True).to(dtype)
@@ -92,43 +94,46 @@ class TestGraphConv(unittest.TestCase):
         conv.w1.bias.data.zero_()
 
         y = conv(verts, edges)
-        self.assertTrue(torch.allclose(y, expected_y))
+        self.assertClose(y, expected_y)
 
     def test_backward(self):
-        device = torch.device("cuda:0")
+        device = get_random_cuda_device()
         mesh = ico_sphere()
         verts = mesh.verts_packed()
         edges = mesh.edges_packed()
+        verts_cpu = verts.clone()
+        edges_cpu = edges.clone()
         verts_cuda = verts.clone().to(device)
         edges_cuda = edges.clone().to(device)
         verts.requires_grad = True
+        verts_cpu.requires_grad = True
         verts_cuda.requires_grad = True
 
         neighbor_sums_cuda = gather_scatter(verts_cuda, edges_cuda, False)
+        neighbor_sums_cpu = gather_scatter(verts_cpu, edges_cpu, False)
         neighbor_sums = gather_scatter_python(verts, edges, False)
-        neighbor_sums_cuda.sum().backward()
-        neighbor_sums.sum().backward()
+        randoms = torch.rand_like(neighbor_sums)
+        (neighbor_sums_cuda * randoms.to(device)).sum().backward()
+        (neighbor_sums_cpu * randoms).sum().backward()
+        (neighbor_sums * randoms).sum().backward()
 
-        self.assertTrue(torch.allclose(verts.grad.cpu(), verts_cuda.grad.cpu()))
+        self.assertClose(verts.grad, verts_cuda.grad.cpu())
+        self.assertClose(verts.grad, verts_cpu.grad)
 
     def test_repr(self):
         conv = GraphConv(32, 64, directed=True)
         self.assertEqual(repr(conv), "GraphConv(32 -> 64, directed=True)")
 
     def test_cpu_cuda_tensor_error(self):
-        device = torch.device("cuda:0")
+        device = get_random_cuda_device()
         verts = torch.tensor(
-            [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
-            dtype=torch.float32,
-            device=device,
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=torch.float32, device=device
         )
         edges = torch.tensor([[0, 1], [0, 2]])
         conv = GraphConv(3, 1, directed=True).to(torch.float32)
         with self.assertRaises(Exception) as err:
             conv(verts, edges)
-        self.assertTrue(
-            "tensors must be on the same device." in str(err.exception)
-        )
+        self.assertTrue("tensors must be on the same device." in str(err.exception))
 
     def test_gather_scatter(self):
         """
@@ -136,29 +141,31 @@ class TestGraphConv(unittest.TestCase):
         Check that gather_scatter cuda version throws an error if cpu tensors
         are given as input.
         """
-        device = torch.device("cuda:0")
+        device = get_random_cuda_device()
         mesh = ico_sphere()
         verts = mesh.verts_packed()
         edges = mesh.edges_packed()
         w0 = nn.Linear(3, 1)
         input = w0(verts)
 
-        # output
-        output_cpu = gather_scatter_python(input, edges, False)
+        # undirected
+        output_python = gather_scatter_python(input, edges, False)
         output_cuda = _C.gather_scatter(
             input.to(device=device), edges.to(device=device), False, False
         )
-        self.assertTrue(torch.allclose(output_cuda.cpu(), output_cpu))
-        with self.assertRaises(Exception) as err:
-            _C.gather_scatter(input.cpu(), edges.cpu(), False, False)
-        self.assertTrue("Not implemented on the CPU" in str(err.exception))
+        self.assertClose(output_cuda.cpu(), output_python)
+
+        output_cpu = _C.gather_scatter(input.cpu(), edges.cpu(), False, False)
+        self.assertClose(output_cpu, output_python)
 
         # directed
-        output_cpu = gather_scatter_python(input, edges, True)
+        output_python = gather_scatter_python(input, edges, True)
         output_cuda = _C.gather_scatter(
             input.to(device=device), edges.to(device=device), True, False
         )
-        self.assertTrue(torch.allclose(output_cuda.cpu(), output_cpu))
+        self.assertClose(output_cuda.cpu(), output_python)
+        output_cpu = _C.gather_scatter(input.cpu(), edges.cpu(), True, False)
+        self.assertClose(output_cpu, output_python)
 
     @staticmethod
     def graph_conv_forward_backward(
@@ -170,12 +177,10 @@ class TestGraphConv(unittest.TestCase):
         backend: str = "cuda",
     ):
         device = torch.device("cuda") if backend == "cuda" else "cpu"
-        verts_list = torch.tensor(
-            num_verts * [[0.11, 0.22, 0.33]], device=device
-        ).view(-1, 3)
-        faces_list = torch.tensor(num_faces * [[1, 2, 3]], device=device).view(
+        verts_list = torch.tensor(num_verts * [[0.11, 0.22, 0.33]], device=device).view(
             -1, 3
         )
+        faces_list = torch.tensor(num_faces * [[1, 2, 3]], device=device).view(-1, 3)
         meshes = Meshes(num_meshes * [verts_list], num_meshes * [faces_list])
         gconv = GraphConv(gconv_dim, gconv_dim, directed=directed)
         gconv.to(device)
@@ -183,9 +188,7 @@ class TestGraphConv(unittest.TestCase):
         total_verts = meshes.verts_packed().shape[0]
 
         # Features.
-        x = torch.randn(
-            total_verts, gconv_dim, device=device, requires_grad=True
-        )
+        x = torch.randn(total_verts, gconv_dim, device=device, requires_grad=True)
         torch.cuda.synchronize()
 
         def run_graph_conv():

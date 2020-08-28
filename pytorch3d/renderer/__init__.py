@@ -6,9 +6,15 @@ from .blending import (
     sigmoid_alpha_blend,
     softmax_rgb_blend,
 )
+from .cameras import OpenGLOrthographicCameras  # deprecated
+from .cameras import OpenGLPerspectiveCameras  # deprecated
+from .cameras import SfMOrthographicCameras  # deprecated
+from .cameras import SfMPerspectiveCameras  # deprecated
 from .cameras import (
-    OpenGLOrthographicCameras,
-    OpenGLPerspectiveCameras,
+    FoVOrthographicCameras,
+    FoVPerspectiveCameras,
+    OrthographicCameras,
+    PerspectiveCameras,
     camera_position_from_spherical_angles,
     get_world_to_view_transform,
     look_at_rotation,
@@ -26,14 +32,23 @@ from .mesh import (
     SoftGouraudShader,
     SoftPhongShader,
     SoftSilhouetteShader,
-    TexturedSoftPhongShader,
+    Textures,
+    TexturesAtlas,
+    TexturesUV,
+    TexturesVertex,
     gouraud_shading,
-    interpolate_face_attributes,
-    interpolate_texture_map,
-    interpolate_vertex_colors,
     phong_shading,
     rasterize_meshes,
 )
+from .points import (
+    AlphaCompositor,
+    NormWeightedCompositor,
+    PointsRasterizationSettings,
+    PointsRasterizer,
+    PointsRenderer,
+    rasterize_points,
+)
 from .utils import TensorProperties, convert_to_tensors_and_broadcast
+
 
 __all__ = [k for k in globals().keys() if not k.startswith("_")]

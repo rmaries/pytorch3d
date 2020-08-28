@@ -5,7 +5,7 @@
 
 # Introduction
 
-PyTorch3d provides efficient, reusable components for 3D Computer Vision research with [PyTorch](https://pytorch.org).
+PyTorch3D provides efficient, reusable components for 3D Computer Vision research with [PyTorch](https://pytorch.org).
 
 Key features include:
 
@@ -13,15 +13,15 @@ Key features include:
 - Efficient operations on triangle meshes (projective transformations, graph convolution, sampling, loss functions)
 - A differentiable mesh renderer
 
-PyTorch3d is designed to integrate smoothly with deep learning methods for predicting and manipulating 3D data.
-For this reason, all operators in PyTorch3d:
+PyTorch3D is designed to integrate smoothly with deep learning methods for predicting and manipulating 3D data.
+For this reason, all operators in PyTorch3D:
 
 - Are implemented using PyTorch tensors
 - Can handle minibatches of hetereogenous data
 - Can be differentiated
 - Can utilize GPUs for acceleration
 
-Within FAIR, PyTorch3d has been used to power research projects such as [Mesh R-CNN](https://arxiv.org/abs/1906.02739).
+Within FAIR, PyTorch3D has been used to power research projects such as [Mesh R-CNN](https://arxiv.org/abs/1906.02739).
 
 ## Installation
 
@@ -29,11 +29,11 @@ For detailed instructions refer to [INSTALL.md](INSTALL.md).
 
 ## License
 
-PyTorch3d is released under the [BSD-3-Clause License](LICENSE).
+PyTorch3D is released under the [BSD-3-Clause License](LICENSE).
 
 ## Tutorials
 
-Get started with PyTorch3d by trying one of the tutorial notebooks.
+Get started with PyTorch3D by trying one of the tutorial notebooks.
 
 |<img src="https://raw.githubusercontent.com/facebookresearch/pytorch3d/master/.github/dolphin_deform.gif" width="310"/>|<img src="https://raw.githubusercontent.com/facebookresearch/pytorch3d/master/.github/bundle_adjust.gif" width="310"/>|
 |:-----------------------------------------------------------------------------------------------------------:|:--------------------------------------------------:|
@@ -45,7 +45,7 @@ Get started with PyTorch3d by trying one of the tutorial notebooks.
 
 ## Documentation
 
-Learn more about the API by reading the PyTorch3d [documentation](https://pytorch3d.readthedocs.org/).
+Learn more about the API by reading the PyTorch3D [documentation](https://pytorch3d.readthedocs.org/).
 
 We also have deep dive notes on several API components:
 
@@ -53,25 +53,44 @@ We also have deep dive notes on several API components:
 - [Mesh IO](https://github.com/facebookresearch/pytorch3d/tree/master/docs/notes/meshes_io.md)
 - [Differentiable Rendering](https://github.com/facebookresearch/pytorch3d/tree/master/docs/notes/renderer_getting_started.md)
 
+### Overview Video
+
+We have created a short (~14 min) video tutorial providing an overview of the PyTorch3D codebase including several code examples. Click on the image below to watch the video on YouTube:
+
+<a href="http://www.youtube.com/watch?v=Pph1r-x9nyY"><img src="http://img.youtube.com/vi/Pph1r-x9nyY/0.jpg" height="225" ></a>
+
 ## Development
 
-We welcome new contributions to Pytorch3d and we will be actively maintaining this library! Please refer to [CONTRIBUTING.md](./.github/CONTRIBUTING.md) for full instructions on how to run the code, tests and linter, and submit your pull requests.
-
+We welcome new contributions to PyTorch3D and we will be actively maintaining this library! Please refer to [CONTRIBUTING.md](./.github/CONTRIBUTING.md) for full instructions on how to run the code, tests and linter, and submit your pull requests.
 
 ## Contributors
 
-PyTorch3d is written and maintained by the Facebook AI Research Computer Vision Team.
+PyTorch3D is written and maintained by the Facebook AI Research Computer Vision Team.
 
 ## Citation
 
-If you find PyTorch3d useful in your research, please cite:
+If you find PyTorch3D useful in your research, please cite our tech report:
 
 ```bibtex
-@misc{ravi2020pytorch3d,
-  author =       {Nikhila Ravi and Jeremy Reizenstein and David Novotny and Taylor Gordon
+@article{ravi2020pytorch3d,
+    author = {Nikhila Ravi and Jeremy Reizenstein and David Novotny and Taylor Gordon
                   and Wan-Yen Lo and Justin Johnson and Georgia Gkioxari},
-  title =        {PyTorch3D},
-  howpublished = {\url{https://github.com/facebookresearch/pytorch3d}},
-  year =         {2020}
+    title = {Accelerating 3D Deep Learning with PyTorch3D},
+    journal = {arXiv:2007.08501},
+    year = {2020},
 }
 ```
+
+## News
+
+Please see below for a timeline of the codebase updates in reverse chronological order. We are sharing updates on the releases as well as research projects which are built with PyTorch3D. The changelogs for the releases are available under [`Releases`](https://github.com/facebookresearch/pytorch3d/releases),  and the builds can be installed using `conda` as per the instructions in [INSTALL.md](INSTALL.md).
+
+**[July 17th 2020]:**   PyTorch3D tech report published on ArXiv: https://arxiv.org/abs/2007.08501
+
+**[April 24th 2020]:**   PyTorch3D v0.2 released
+
+**[March 25th 2020]:**   [SynSin](https://arxiv.org/abs/1912.08804) codebase released using PyTorch3D: https://github.com/facebookresearch/synsin
+
+**[March 8th 2020]:**   PyTorch3D v0.1.1 bug fix release
+
+**[Jan 23rd 2020]:**   PyTorch3D v0.1 released. [Mesh R-CNN](https://arxiv.org/abs/1906.02739) codebase released: https://github.com/facebookresearch/meshrcnn

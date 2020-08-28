@@ -3,8 +3,10 @@
 
 import glob
 import os
-from setuptools import find_packages, setup
+import runpy
+
 import torch
+from setuptools import find_packages, setup
 from torch.utils.cpp_extension import CUDA_HOME, CppExtension, CUDAExtension
 
 
@@ -66,12 +68,27 @@ def get_extensions():
     return ext_modules
 
 
+# Retrieve __version__ from the package.
+__version__ = runpy.run_path("pytorch3d/__init__.py")["__version__"]
+
+
+if os.getenv("PYTORCH3D_NO_NINJA", "0") == "1":
+
+    class BuildExtension(torch.utils.cpp_extension.BuildExtension):
+        def __init__(self, *args, **kwargs):
+            super().__init__(use_ninja=False, *args, **kwargs)
+
+
+else:
+    BuildExtension = torch.utils.cpp_extension.BuildExtension
+
+
 setup(
     name="pytorch3d",
-    version="0.1",
+    version=__version__,
     author="FAIR",
     url="https://github.com/facebookresearch/pytorch3d",
-    description="PyTorch3d is FAIR's library of reusable components "
+    description="PyTorch3D is FAIR's library of reusable components "
     "for deep Learning with 3D data.",
     packages=find_packages(exclude=("configs", "tests")),
     install_requires=["torchvision>=0.4", "fvcore"],
@@ -80,5 +97,5 @@ setup(
         "dev": ["flake8", "isort", "black==19.3b0"],
     },
     ext_modules=get_extensions(),
-    cmdclass={"build_ext": torch.utils.cpp_extension.BuildExtension},
+    cmdclass={"build_ext": BuildExtension},
 )

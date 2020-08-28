@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 # run this script from the project root using `./scripts/build_docs.sh`
 
@@ -31,7 +31,7 @@ done
 
 
 echo "-----------------------------------"
-echo "Building PyTorch3d Docusaurus site"
+echo "Building PyTorch3D Docusaurus site"
 echo "-----------------------------------"
 cd website || exit
 yarn

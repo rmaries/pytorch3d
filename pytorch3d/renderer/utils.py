@@ -1,10 +1,12 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
-import numpy as np
+import copy
+import inspect
 import warnings
 from typing import Any, Union
+
+import numpy as np
 import torch
 
 
@@ -46,10 +48,7 @@ class TensorAccessor(object):
         # Convert the attribute to a tensor if it is not a tensor.
         if not torch.is_tensor(value):
             value = torch.tensor(
-                value,
-                device=v.device,
-                dtype=v.dtype,
-                requires_grad=v.requires_grad,
+                value, device=v.device, dtype=v.dtype, requires_grad=v.requires_grad
             )
 
         # Check the shapes match the existing shape and the shape of the index.
@@ -171,10 +170,13 @@ class TensorProperties(object):
         """
         for k in dir(self):
             v = getattr(self, k)
-            if k == "device":
-                setattr(self, k, v)
+            if inspect.ismethod(v) or k.startswith("__"):
+                continue
             if torch.is_tensor(v):
-                setattr(other, k, v.clone())
+                v_clone = v.clone()
+            else:
+                v_clone = copy.deepcopy(v)
+            setattr(other, k, v_clone)
         return other
 
     def gather_props(self, batch_idx):
@@ -224,34 +226,37 @@ class TensorProperties(object):
             self with all properties reshaped. e.g. a property with shape (N, 3)
             is transformed to shape (B, 3).
         """
+        # Iterate through the attributes of the class which are tensors.
         for k in dir(self):
             v = getattr(self, k)
             if torch.is_tensor(v):
                 if v.shape[0] > 1:
                     # There are different values for each batch element
-                    # so gather these using the batch_idx
-                    idx_dims = batch_idx.shape
+                    # so gather these using the batch_idx.
+                    # First clone the input batch_idx tensor before
+                    # modifying it.
+                    _batch_idx = batch_idx.clone()
+                    idx_dims = _batch_idx.shape
                     tensor_dims = v.shape
                     if len(idx_dims) > len(tensor_dims):
                         msg = "batch_idx cannot have more dimensions than %s. "
                         msg += "got shape %r and %s has shape %r"
                         raise ValueError(msg % (k, idx_dims, k, tensor_dims))
                     if idx_dims != tensor_dims:
-                        # To use torch.gather the index tensor (batch_idx) has
+                        # To use torch.gather the index tensor (_batch_idx) has
                         # to have the same shape as the input tensor.
                         new_dims = len(tensor_dims) - len(idx_dims)
                         new_shape = idx_dims + (1,) * new_dims
                         expand_dims = (-1,) + tensor_dims[1:]
-                        batch_idx = batch_idx.view(*new_shape)
-                        batch_idx = batch_idx.expand(*expand_dims)
-                    v = v.gather(0, batch_idx)
+                        _batch_idx = _batch_idx.view(*new_shape)
+                        _batch_idx = _batch_idx.expand(*expand_dims)
+
+                    v = v.gather(0, _batch_idx)
                     setattr(self, k, v)
         return self
 
 
-def format_tensor(
-    input, dtype=torch.float32, device: str = "cpu"
-) -> torch.Tensor:
+def format_tensor(input, dtype=torch.float32, device: str = "cpu") -> torch.Tensor:
     """
     Helper function for converting a scalar value to a tensor.
 
@@ -272,9 +277,7 @@ def format_tensor(
     return input
 
 
-def convert_to_tensors_and_broadcast(
-    *args, dtype=torch.float32, device: str = "cpu"
-):
+def convert_to_tensors_and_broadcast(*args, dtype=torch.float32, device: str = "cpu"):
     """
     Helper function to handle parsing an arbitrary number of inputs (*args)
     which all need to have the same batch dimension.
@@ -305,7 +308,7 @@ def convert_to_tensors_and_broadcast(
     args_Nd = []
     for c in args_1d:
         if c.shape[0] != 1 and c.shape[0] != N:
-            msg = "Got non-broadcastable sizes %r" % (sizes)
+            msg = "Got non-broadcastable sizes %r" % sizes
             raise ValueError(msg)
 
         # Expand broadcast dim and keep non broadcast dims the same size

@@ -1,14 +1,12 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 import unittest
-import torch
 
+import torch
+from common_testing import TestCaseMixin, get_random_cuda_device
 from pytorch3d.ops import mesh_face_areas_normals
 from pytorch3d.structures.meshes import Meshes
-
-from common_testing import TestCaseMixin
 
 
 class TestFaceAreasNormals(TestCaseMixin, unittest.TestCase):
@@ -28,10 +26,7 @@ class TestFaceAreasNormals(TestCaseMixin, unittest.TestCase):
         faces_list = []
         for _ in range(num_meshes):
             verts = torch.rand(
-                (num_verts, 3),
-                dtype=torch.float32,
-                device=device,
-                requires_grad=True,
+                (num_verts, 3), dtype=torch.float32, device=device, requires_grad=True
             )
             faces = torch.randint(
                 num_verts, size=(num_faces, 3), dtype=torch.int64, device=device
@@ -56,9 +51,7 @@ class TestFaceAreasNormals(TestCaseMixin, unittest.TestCase):
         v02 = vertices_faces[:, 2] - vertices_faces[:, 0]
         normals = torch.cross(v01, v02, dim=1)  # (F, 3)
         face_areas = normals.norm(dim=-1) / 2
-        face_normals = torch.nn.functional.normalize(
-            normals, p=2, dim=1, eps=1e-6
-        )
+        face_normals = torch.nn.functional.normalize(normals, p=2, dim=1, eps=1e-6)
         return face_areas, face_normals
 
     def _test_face_areas_normals_helper(self, device, dtype=torch.float32):
@@ -77,7 +70,7 @@ class TestFaceAreasNormals(TestCaseMixin, unittest.TestCase):
         verts_torch = verts.detach().clone().to(dtype)
         verts_torch.requires_grad = True
         faces_torch = faces.detach().clone()
-        areas_torch, normals_torch = TestFaceAreasNormals.face_areas_normals_python(
+        (areas_torch, normals_torch) = TestFaceAreasNormals.face_areas_normals_python(
             verts_torch, faces_torch
         )
         self.assertClose(areas_torch, areas, atol=1e-7)
@@ -101,13 +94,15 @@ class TestFaceAreasNormals(TestCaseMixin, unittest.TestCase):
         self._test_face_areas_normals_helper("cpu")
 
     def test_face_areas_normals_cuda(self):
-        self._test_face_areas_normals_helper("cuda:0")
+        device = get_random_cuda_device()
+        self._test_face_areas_normals_helper(device)
 
     def test_nonfloats_cpu(self):
         self._test_face_areas_normals_helper("cpu", dtype=torch.double)
 
     def test_nonfloats_cuda(self):
-        self._test_face_areas_normals_helper("cuda:0", dtype=torch.double)
+        device = get_random_cuda_device()
+        self._test_face_areas_normals_helper(device, dtype=torch.double)
 
     @staticmethod
     def face_areas_normals_with_init(

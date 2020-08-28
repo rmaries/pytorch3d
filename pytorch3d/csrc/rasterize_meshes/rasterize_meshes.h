@@ -4,6 +4,7 @@
 #include <torch/extension.h>
 #include <cstdio>
 #include <tuple>
+#include "utils/pytorch3d_cutils.h"
 
 // ****************************************************************************
 // *                            FORWARD PASS                                 *
@@ -14,10 +15,12 @@ RasterizeMeshesNaiveCpu(
     const torch::Tensor& face_verts,
     const torch::Tensor& mesh_to_face_first_idx,
     const torch::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int faces_per_pixel,
-    bool perspective_correct);
+    const int image_size,
+    const float blur_radius,
+    const int faces_per_pixel,
+    const bool perspective_correct,
+    const bool clip_barycentric_coords,
+    const bool cull_backfaces);
 
 #ifdef WITH_CUDA
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor>
@@ -25,10 +28,12 @@ RasterizeMeshesNaiveCuda(
     const at::Tensor& face_verts,
     const at::Tensor& mesh_to_face_first_idx,
     const at::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int num_closest,
-    bool perspective_correct);
+    const int image_size,
+    const float blur_radius,
+    const int num_closest,
+    const bool perspective_correct,
+    const bool clip_barycentric_coords,
+    const bool cull_backfaces);
 #endif
 // Forward pass for rasterizing a batch of meshes.
 //
@@ -55,6 +60,14 @@ RasterizeMeshesNaiveCuda(
 //                         coordinates for each pixel; if this is False then
 //                         this function instead returns screen-space
 //                         barycentric coordinates for each pixel.
+//    cull_backfaces: Bool, Whether to only rasterize mesh faces which are
+//                    visible to the camera.  This assumes that vertices of
+//                    front-facing triangles are ordered in an anti-clockwise
+//                    fashion, and triangles that face away from the camera are
+//                    in a clockwise order relative to the current view
+//                    direction. NOTE: This will only work if the mesh faces are
+//                    consistently defined with counter-clockwise ordering when
+//                    viewed from the outside.
 //
 // Returns:
 //    A 4 element tuple of:
@@ -77,13 +90,18 @@ RasterizeMeshesNaive(
     const torch::Tensor& face_verts,
     const torch::Tensor& mesh_to_face_first_idx,
     const torch::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int faces_per_pixel,
-    bool perspective_correct) {
+    const int image_size,
+    const float blur_radius,
+    const int faces_per_pixel,
+    const bool perspective_correct,
+    const bool clip_barycentric_coords,
+    const bool cull_backfaces) {
   // TODO: Better type checking.
-  if (face_verts.type().is_cuda()) {
+  if (face_verts.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(face_verts);
+    CHECK_CUDA(mesh_to_face_first_idx);
+    CHECK_CUDA(num_faces_per_mesh);
     return RasterizeMeshesNaiveCuda(
         face_verts,
         mesh_to_face_first_idx,
@@ -91,7 +109,9 @@ RasterizeMeshesNaive(
         image_size,
         blur_radius,
         faces_per_pixel,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords,
+        cull_backfaces);
 #else
     AT_ERROR("Not compiled with GPU support");
 #endif
@@ -103,7 +123,9 @@ RasterizeMeshesNaive(
         image_size,
         blur_radius,
         faces_per_pixel,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords,
+        cull_backfaces);
   }
 }
 
@@ -117,7 +139,8 @@ torch::Tensor RasterizeMeshesBackwardCpu(
     const torch::Tensor& grad_bary,
     const torch::Tensor& grad_zbuf,
     const torch::Tensor& grad_dists,
-    bool perspective_correct);
+    const bool perspective_correct,
+    const bool clip_barycentric_coords);
 
 #ifdef WITH_CUDA
 torch::Tensor RasterizeMeshesBackwardCuda(
@@ -126,7 +149,8 @@ torch::Tensor RasterizeMeshesBackwardCuda(
     const torch::Tensor& grad_bary,
     const torch::Tensor& grad_zbuf,
     const torch::Tensor& grad_dists,
-    bool perspective_correct);
+    const bool perspective_correct,
+    const bool clip_barycentric_coords);
 #endif
 
 // Args:
@@ -159,16 +183,23 @@ torch::Tensor RasterizeMeshesBackward(
     const torch::Tensor& grad_zbuf,
     const torch::Tensor& grad_bary,
     const torch::Tensor& grad_dists,
-    bool perspective_correct) {
-  if (face_verts.type().is_cuda()) {
+    const bool perspective_correct,
+    const bool clip_barycentric_coords) {
+  if (face_verts.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(face_verts);
+    CHECK_CUDA(pix_to_face);
+    CHECK_CUDA(grad_zbuf);
+    CHECK_CUDA(grad_bary);
+    CHECK_CUDA(grad_dists);
     return RasterizeMeshesBackwardCuda(
         face_verts,
         pix_to_face,
         grad_zbuf,
         grad_bary,
         grad_dists,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords);
 #else
     AT_ERROR("Not compiled with GPU support");
 #endif
@@ -179,7 +210,8 @@ torch::Tensor RasterizeMeshesBackward(
         grad_zbuf,
         grad_bary,
         grad_dists,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords);
   }
 }
 
@@ -191,20 +223,20 @@ torch::Tensor RasterizeMeshesCoarseCpu(
     const torch::Tensor& face_verts,
     const at::Tensor& mesh_to_face_first_idx,
     const at::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int bin_size,
-    int max_faces_per_bin);
+    const int image_size,
+    const float blur_radius,
+    const int bin_size,
+    const int max_faces_per_bin);
 
 #ifdef WITH_CUDA
 torch::Tensor RasterizeMeshesCoarseCuda(
     const torch::Tensor& face_verts,
     const torch::Tensor& mesh_to_face_first_idx,
     const torch::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int bin_size,
-    int max_faces_per_bin);
+    const int image_size,
+    const float blur_radius,
+    const int bin_size,
+    const int max_faces_per_bin);
 #endif
 // Args:
 //    face_verts: Tensor of shape (F, 3, 3) giving (packed) vertex positions for
@@ -232,12 +264,15 @@ torch::Tensor RasterizeMeshesCoarse(
     const torch::Tensor& face_verts,
     const torch::Tensor& mesh_to_face_first_idx,
     const torch::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int bin_size,
-    int max_faces_per_bin) {
-  if (face_verts.type().is_cuda()) {
+    const int image_size,
+    const float blur_radius,
+    const int bin_size,
+    const int max_faces_per_bin) {
+  if (face_verts.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(face_verts);
+    CHECK_CUDA(mesh_to_face_first_idx);
+    CHECK_CUDA(num_faces_per_mesh);
     return RasterizeMeshesCoarseCuda(
         face_verts,
         mesh_to_face_first_idx,
@@ -270,11 +305,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeMeshesFineCuda(
     const torch::Tensor& face_verts,
     const torch::Tensor& bin_faces,
-    int image_size,
-    float blur_radius,
-    int bin_size,
-    int faces_per_pixel,
-    bool perspective_correct);
+    const int image_size,
+    const float blur_radius,
+    const int bin_size,
+    const int faces_per_pixel,
+    const bool perspective_correct,
+    const bool clip_barycentric_coords,
+    const bool cull_backfaces);
 #endif
 // Args:
 //    face_verts: Tensor of shape (F, 3, 3) giving (packed) vertex positions for
@@ -296,6 +333,14 @@ RasterizeMeshesFineCuda(
 //                         coordinates for each pixel; if this is False then
 //                         this function instead returns screen-space
 //                         barycentric coordinates for each pixel.
+//    cull_backfaces: Bool, Whether to only rasterize mesh faces which are
+//                    visible to the camera.  This assumes that vertices of
+//                    front-facing triangles are ordered in an anti-clockwise
+//                    fashion, and triangles that face away from the camera are
+//                    in a clockwise order relative to the current view
+//                    direction. NOTE: This will only work if the mesh faces are
+//                    consistently defined with counter-clockwise ordering when
+//                    viewed from the outside.
 //
 // Returns (same as rasterize_meshes):
 //    A 4 element tuple of:
@@ -317,13 +362,17 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeMeshesFine(
     const torch::Tensor& face_verts,
     const torch::Tensor& bin_faces,
-    int image_size,
-    float blur_radius,
-    int bin_size,
-    int faces_per_pixel,
-    bool perspective_correct) {
-  if (face_verts.type().is_cuda()) {
+    const int image_size,
+    const float blur_radius,
+    const int bin_size,
+    const int faces_per_pixel,
+    const bool perspective_correct,
+    const bool clip_barycentric_coords,
+    const bool cull_backfaces) {
+  if (face_verts.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(face_verts);
+    CHECK_CUDA(bin_faces);
     return RasterizeMeshesFineCuda(
         face_verts,
         bin_faces,
@@ -331,7 +380,9 @@ RasterizeMeshesFine(
         blur_radius,
         bin_size,
         faces_per_pixel,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords,
+        cull_backfaces);
 #else
     AT_ERROR("Not compiled with GPU support");
 #endif
@@ -372,6 +423,14 @@ RasterizeMeshesFine(
 //                         coordinates for each pixel; if this is False then
 //                         this function instead returns screen-space
 //                         barycentric coordinates for each pixel.
+//    cull_backfaces: Bool, Whether to only rasterize mesh faces which are
+//                    visible to the camera.  This assumes that vertices of
+//                    front-facing triangles are ordered in an anti-clockwise
+//                    fashion, and triangles that face away from the camera are
+//                    in a clockwise order relative to the current view
+//                    direction. NOTE: This will only work if the mesh faces are
+//                    consistently defined with counter-clockwise ordering when
+//                    viewed from the outside.
 //
 // Returns:
 //    A 4 element tuple of:
@@ -394,12 +453,14 @@ RasterizeMeshes(
     const torch::Tensor& face_verts,
     const torch::Tensor& mesh_to_face_first_idx,
     const torch::Tensor& num_faces_per_mesh,
-    int image_size,
-    float blur_radius,
-    int faces_per_pixel,
-    int bin_size,
-    int max_faces_per_bin,
-    bool perspective_correct) {
+    const int image_size,
+    const float blur_radius,
+    const int faces_per_pixel,
+    const int bin_size,
+    const int max_faces_per_bin,
+    const bool perspective_correct,
+    const bool clip_barycentric_coords,
+    const bool cull_backfaces) {
   if (bin_size > 0 && max_faces_per_bin > 0) {
     // Use coarse-to-fine rasterization
     auto bin_faces = RasterizeMeshesCoarse(
@@ -417,7 +478,9 @@ RasterizeMeshes(
         blur_radius,
         bin_size,
         faces_per_pixel,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords,
+        cull_backfaces);
   } else {
     // Use the naive per-pixel implementation
     return RasterizeMeshesNaive(
@@ -427,6 +490,8 @@ RasterizeMeshes(
         image_size,
         blur_radius,
         faces_per_pixel,
-        perspective_correct);
+        perspective_correct,
+        clip_barycentric_coords,
+        cull_backfaces);
   }
 }

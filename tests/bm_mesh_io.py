@@ -1,33 +1,97 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
-from fvcore.common.benchmark import benchmark
+from itertools import product
 
+from fvcore.common.benchmark import benchmark
 from test_obj_io import TestMeshObjIO
 from test_ply_io import TestMeshPlyIO
 
 
 def bm_save_load() -> None:
-    kwargs_list = [
-        {"V": 100, "F": 300},
-        {"V": 1000, "F": 3000},
-        {"V": 10000, "F": 30000},
+    simple_kwargs_list = [
+        {"V": 100, "F": 200},
+        {"V": 1000, "F": 2000},
+        {"V": 10000, "F": 20000},
     ]
     benchmark(
-        TestMeshObjIO.load_obj_with_init,
-        "LOAD_OBJ",
+        TestMeshObjIO.bm_load_simple_obj_with_init,
+        "LOAD_SIMPLE_OBJ",
+        simple_kwargs_list,
+        warmup_iters=1,
+    )
+    benchmark(
+        TestMeshObjIO.bm_save_simple_obj_with_init,
+        "SAVE_SIMPLE_OBJ",
+        simple_kwargs_list,
+        warmup_iters=1,
+    )
+    benchmark(
+        TestMeshPlyIO.bm_load_simple_ply_with_init,
+        "LOAD_SIMPLE_PLY",
+        simple_kwargs_list,
+        warmup_iters=1,
+    )
+    benchmark(
+        TestMeshPlyIO.bm_save_simple_ply_with_init,
+        "SAVE_SIMPLE_PLY",
+        simple_kwargs_list,
+        warmup_iters=1,
+    )
+
+    complex_kwargs_list = [{"N": 8}, {"N": 32}, {"N": 128}]
+    benchmark(
+        TestMeshObjIO.bm_load_complex_obj,
+        "LOAD_COMPLEX_OBJ",
+        complex_kwargs_list,
+        warmup_iters=1,
+    )
+    benchmark(
+        TestMeshObjIO.bm_save_complex_obj,
+        "SAVE_COMPLEX_OBJ",
+        complex_kwargs_list,
+        warmup_iters=1,
+    )
+    benchmark(
+        TestMeshPlyIO.bm_load_complex_ply,
+        "LOAD_COMPLEX_PLY",
+        complex_kwargs_list,
+        warmup_iters=1,
+    )
+    benchmark(
+        TestMeshPlyIO.bm_save_complex_ply,
+        "SAVE_COMPLEX_PLY",
+        complex_kwargs_list,
+        warmup_iters=1,
+    )
+
+    # Texture loading benchmarks
+    kwargs_list = [{"R": 2}, {"R": 4}, {"R": 10}, {"R": 15}, {"R": 20}]
+    benchmark(
+        TestMeshObjIO.bm_load_texture_atlas,
+        "PYTORCH3D_TEXTURE_ATLAS",
+        kwargs_list,
+        warmup_iters=1,
+    )
+
+    kwargs_list = []
+    S = [64, 256, 1024]
+    F = [100, 1000, 10000]
+    R = [5, 10, 20]
+    test_cases = product(S, F, R)
+
+    for case in test_cases:
+        s, f, r = case
+        kwargs_list.append({"S": s, "F": f, "R": r})
+
+    benchmark(
+        TestMeshObjIO.bm_bilinear_sampling_vectorized,
+        "BILINEAR_VECTORIZED",
         kwargs_list,
         warmup_iters=1,
     )
     benchmark(
-        TestMeshObjIO.save_obj_with_init,
-        "SAVE_OBJ",
+        TestMeshObjIO.bm_bilinear_sampling_grid_sample,
+        "BILINEAR_GRID_SAMPLE",
         kwargs_list,
         warmup_iters=1,
-    )
-    benchmark(
-        TestMeshPlyIO.load_ply_bm, "LOAD_PLY", kwargs_list, warmup_iters=1
-    )
-    benchmark(
-        TestMeshPlyIO.save_ply_bm, "SAVE_PLY", kwargs_list, warmup_iters=1
     )

@@ -2,6 +2,7 @@
 
 #pragma once
 #include <torch/extension.h>
+#include "utils/pytorch3d_cutils.h"
 
 // Fused gather scatter operation for aggregating features of neighbor nodes
 // in a graph. This gather scatter operation is specific to graphs as edge
@@ -19,25 +20,32 @@
 // Returns:
 //   output: float32 Tensor of same shape as input.
 
-// Cuda implementation.
-at::Tensor gather_scatter_cuda(
-    const at::Tensor input,
-    const at::Tensor edges,
+at::Tensor GatherScatterCuda(
+    const at::Tensor& input,
+    const at::Tensor& edges,
+    bool directed,
+    bool backward);
+
+at::Tensor GatherScatterCpu(
+    const at::Tensor& input,
+    const at::Tensor& edges,
     bool directed,
     bool backward);
 
 // Exposed implementation.
-at::Tensor gather_scatter(
-    const at::Tensor input,
-    const at::Tensor edges,
+at::Tensor GatherScatter(
+    const at::Tensor& input,
+    const at::Tensor& edges,
     bool directed,
     bool backward) {
-  if (input.type().is_cuda() && edges.type().is_cuda()) {
+  if (input.is_cuda() && edges.is_cuda()) {
 #ifdef WITH_CUDA
-    return gather_scatter_cuda(input, edges, directed, backward);
+    CHECK_CUDA(input);
+    CHECK_CUDA(edges);
+    return GatherScatterCuda(input, edges, directed, backward);
 #else
     AT_ERROR("Not compiled with GPU support.");
 #endif
   }
-  AT_ERROR("Not implemented on the CPU");
+  return GatherScatterCpu(input, edges, directed, backward);
 }

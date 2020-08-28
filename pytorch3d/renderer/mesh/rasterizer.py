@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 from typing import NamedTuple, Optional
+
 import torch
 import torch.nn as nn
 
-from ..cameras import get_world_to_view_transform
 from .rasterize_meshes import rasterize_meshes
 
 
@@ -26,6 +25,8 @@ class RasterizationSettings:
         "bin_size",
         "max_faces_per_bin",
         "perspective_correct",
+        "clip_barycentric_coords",
+        "cull_backfaces",
     ]
 
     def __init__(
@@ -36,6 +37,8 @@ class RasterizationSettings:
         bin_size: Optional[int] = None,
         max_faces_per_bin: Optional[int] = None,
         perspective_correct: bool = False,
+        clip_barycentric_coords: Optional[bool] = None,
+        cull_backfaces: bool = False,
     ):
         self.image_size = image_size
         self.blur_radius = blur_radius
@@ -43,6 +46,8 @@ class RasterizationSettings:
         self.bin_size = bin_size
         self.max_faces_per_bin = max_faces_per_bin
         self.perspective_correct = perspective_correct
+        self.clip_barycentric_coords = clip_barycentric_coords
+        self.cull_backfaces = cull_backfaces
 
 
 class MeshRasterizer(nn.Module):
@@ -51,7 +56,7 @@ class MeshRasterizer(nn.Module):
     Meshes.
     """
 
-    def __init__(self, cameras, raster_settings=None):
+    def __init__(self, cameras=None, raster_settings=None):
         """
         Args:
             cameras: A cameras object which has a  `transform_points` method
@@ -85,22 +90,30 @@ class MeshRasterizer(nn.Module):
         be moved into forward.
         """
         cameras = kwargs.get("cameras", self.cameras)
+        if cameras is None:
+            msg = "Cameras must be specified either at initialization \
+                or in the forward pass of MeshRasterizer"
+            raise ValueError(msg)
+
+        n_cameras = len(cameras)
+        if n_cameras != 1 and n_cameras != len(meshes_world):
+            msg = "Wrong number (%r) of cameras for %r meshes"
+            raise ValueError(msg % (n_cameras, len(meshes_world)))
+
         verts_world = meshes_world.verts_padded()
-        verts_world_packed = meshes_world.verts_packed()
-        verts_screen = cameras.transform_points(verts_world, **kwargs)
 
         # NOTE: Retaining view space z coordinate for now.
         # TODO: Revisit whether or not to transform z coordinate to [-1, 1] or
         # [0, 1] range.
-        view_transform = get_world_to_view_transform(R=cameras.R, T=cameras.T)
-        verts_view = view_transform.transform_points(verts_world)
+        verts_view = cameras.get_world_to_view_transform(**kwargs).transform_points(
+            verts_world
+        )
+        verts_screen = cameras.get_projection_transform(**kwargs).transform_points(
+            verts_view
+        )
         verts_screen[..., 2] = verts_view[..., 2]
-
-        # Offset verts of input mesh to reuse cached padded/packed calculations.
-        pad_to_packed_idx = meshes_world.verts_padded_to_packed_idx()
-        verts_screen_packed = verts_screen.view(-1, 3)[pad_to_packed_idx, :]
-        verts_packed_offset = verts_screen_packed - verts_world_packed
-        return meshes_world.offset_verts(verts_packed_offset)
+        meshes_screen = meshes_world.update_padded(new_verts_padded=verts_screen)
+        return meshes_screen
 
     def forward(self, meshes_world, **kwargs) -> Fragments:
         """
@@ -112,6 +125,14 @@ class MeshRasterizer(nn.Module):
         """
         meshes_screen = self.transform(meshes_world, **kwargs)
         raster_settings = kwargs.get("raster_settings", self.raster_settings)
+
+        # By default, turn on clip_barycentric_coords if blur_radius > 0.
+        # When blur_radius > 0, a face can be matched to a pixel that is outside the
+        # face, resulting in negative barycentric coordinates.
+        clip_barycentric_coords = raster_settings.clip_barycentric_coords
+        if clip_barycentric_coords is None:
+            clip_barycentric_coords = raster_settings.blur_radius > 0.0
+
         # TODO(jcjohns): Should we try to set perspective_correct automatically
         # based on the type of the camera?
         pix_to_face, zbuf, bary_coords, dists = rasterize_meshes(
@@ -122,10 +143,9 @@ class MeshRasterizer(nn.Module):
             bin_size=raster_settings.bin_size,
             max_faces_per_bin=raster_settings.max_faces_per_bin,
             perspective_correct=raster_settings.perspective_correct,
+            clip_barycentric_coords=clip_barycentric_coords,
+            cull_backfaces=raster_settings.cull_backfaces,
         )
         return Fragments(
-            pix_to_face=pix_to_face,
-            zbuf=zbuf,
-            bary_coords=bary_coords,
-            dists=dists,
+            pix_to_face=pix_to_face, zbuf=zbuf, bary_coords=bary_coords, dists=dists
         )

@@ -1,17 +1,17 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 import unittest
 from pathlib import Path
-import torch
 
+import torch
+from common_testing import TestCaseMixin, get_random_cuda_device
 from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures.meshes import Meshes
 from pytorch3d.utils.ico_sphere import ico_sphere
 
 
-class TestSamplePoints(unittest.TestCase):
+class TestSamplePoints(TestCaseMixin, unittest.TestCase):
     def setUp(self) -> None:
         super().setUp()
         torch.manual_seed(1)
@@ -27,9 +27,7 @@ class TestSamplePoints(unittest.TestCase):
         verts_list = []
         faces_list = []
         for _ in range(num_meshes):
-            verts = torch.rand(
-                (num_verts, 3), dtype=torch.float32, device=device
-            )
+            verts = torch.rand((num_verts, 3), dtype=torch.float32, device=device)
             faces = torch.randint(
                 num_verts, size=(num_faces, 3), dtype=torch.int64, device=device
             )
@@ -44,16 +42,12 @@ class TestSamplePoints(unittest.TestCase):
         Check sample_points_from_meshes raises an exception if all meshes are
         invalid.
         """
-        device = torch.device("cuda:0")
+        device = get_random_cuda_device()
         verts1 = torch.tensor([], dtype=torch.float32, device=device)
         faces1 = torch.tensor([], dtype=torch.int64, device=device)
-        meshes = Meshes(
-            verts=[verts1, verts1, verts1], faces=[faces1, faces1, faces1]
-        )
+        meshes = Meshes(verts=[verts1, verts1, verts1], faces=[faces1, faces1, faces1])
         with self.assertRaises(ValueError) as err:
-            sample_points_from_meshes(
-                meshes, num_samples=100, return_normals=True
-            )
+            sample_points_from_meshes(meshes, num_samples=100, return_normals=True)
         self.assertTrue("Meshes are empty." in str(err.exception))
 
     def test_sampling_output(self):
@@ -62,16 +56,11 @@ class TestSamplePoints(unittest.TestCase):
         For an ico_sphere, the sampled vertices should lie on a unit sphere.
         For an empty mesh, the samples and normals should be 0.
         """
-        device = torch.device("cuda:0")
+        device = get_random_cuda_device()
 
         # Unit simplex.
         verts_pyramid = torch.tensor(
-            [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             dtype=torch.float32,
             device=device,
         )
@@ -99,33 +88,21 @@ class TestSamplePoints(unittest.TestCase):
         self.assertEqual(normals.shape, (3, num_samples, 3))
 
         # Empty meshes: should have all zeros for samples and normals.
-        self.assertTrue(
-            torch.allclose(samples[0, :], torch.zeros((1, num_samples, 3)))
-        )
-        self.assertTrue(
-            torch.allclose(normals[0, :], torch.zeros((1, num_samples, 3)))
-        )
+        self.assertClose(samples[0, :], torch.zeros((num_samples, 3)))
+        self.assertClose(normals[0, :], torch.zeros((num_samples, 3)))
 
         # Sphere: points should have radius 1.
         x, y, z = samples[1, :].unbind(1)
         radius = torch.sqrt(x ** 2 + y ** 2 + z ** 2)
 
-        self.assertTrue(torch.allclose(radius, torch.ones((num_samples))))
+        self.assertClose(radius, torch.ones(num_samples))
 
         # Pyramid: points shoudl lie on one of the faces.
         pyramid_verts = samples[2, :]
         pyramid_normals = normals[2, :]
 
-        self.assertTrue(
-            torch.allclose(
-                pyramid_verts.lt(1).float(), torch.ones_like(pyramid_verts)
-            )
-        )
-        self.assertTrue(
-            torch.allclose(
-                (pyramid_verts >= 0).float(), torch.ones_like(pyramid_verts)
-            )
-        )
+        self.assertClose(pyramid_verts.lt(1).float(), torch.ones_like(pyramid_verts))
+        self.assertClose((pyramid_verts >= 0).float(), torch.ones_like(pyramid_verts))
 
         # Face 1: z = 0,  x + y <= 1, normals = (0, 0, 1).
         face_1_idxs = pyramid_verts[:, 2] == 0
@@ -133,16 +110,10 @@ class TestSamplePoints(unittest.TestCase):
             pyramid_verts[face_1_idxs, :],
             pyramid_normals[face_1_idxs, :],
         )
-        self.assertTrue(
-            torch.all((face_1_verts[:, 0] + face_1_verts[:, 1]) <= 1)
-        )
-        self.assertTrue(
-            torch.allclose(
-                face_1_normals,
-                torch.tensor([0, 0, 1], dtype=torch.float32).expand(
-                    face_1_normals.size()
-                ),
-            )
+        self.assertTrue(torch.all((face_1_verts[:, 0] + face_1_verts[:, 1]) <= 1))
+        self.assertClose(
+            face_1_normals,
+            torch.tensor([0, 0, 1], dtype=torch.float32).expand(face_1_normals.size()),
         )
 
         # Face 2: x = 0,  z + y <= 1, normals = (1, 0, 0).
@@ -151,16 +122,10 @@ class TestSamplePoints(unittest.TestCase):
             pyramid_verts[face_2_idxs, :],
             pyramid_normals[face_2_idxs, :],
         )
-        self.assertTrue(
-            torch.all((face_2_verts[:, 1] + face_2_verts[:, 2]) <= 1)
-        )
-        self.assertTrue(
-            torch.allclose(
-                face_2_normals,
-                torch.tensor([1, 0, 0], dtype=torch.float32).expand(
-                    face_2_normals.size()
-                ),
-            )
+        self.assertTrue(torch.all((face_2_verts[:, 1] + face_2_verts[:, 2]) <= 1))
+        self.assertClose(
+            face_2_normals,
+            torch.tensor([1, 0, 0], dtype=torch.float32).expand(face_2_normals.size()),
         )
 
         # Face 3: y = 0, x + z <= 1, normals = (0, -1, 0).
@@ -169,16 +134,10 @@ class TestSamplePoints(unittest.TestCase):
             pyramid_verts[face_3_idxs, :],
             pyramid_normals[face_3_idxs, :],
         )
-        self.assertTrue(
-            torch.all((face_3_verts[:, 0] + face_3_verts[:, 2]) <= 1)
-        )
-        self.assertTrue(
-            torch.allclose(
-                face_3_normals,
-                torch.tensor([0, -1, 0], dtype=torch.float32).expand(
-                    face_3_normals.size()
-                ),
-            )
+        self.assertTrue(torch.all((face_3_verts[:, 0] + face_3_verts[:, 2]) <= 1))
+        self.assertClose(
+            face_3_normals,
+            torch.tensor([0, -1, 0], dtype=torch.float32).expand(face_3_normals.size()),
         )
 
         # Face 4: x + y + z = 1, normals = (1, 1, 1)/sqrt(3).
@@ -187,22 +146,16 @@ class TestSamplePoints(unittest.TestCase):
             pyramid_verts[face_4_idxs, :],
             pyramid_normals[face_4_idxs, :],
         )
-        self.assertTrue(
-            torch.allclose(
-                face_4_verts.sum(1), torch.ones(face_4_verts.size(0))
-            )
-        )
-        self.assertTrue(
-            torch.allclose(
-                face_4_normals,
-                (
-                    torch.tensor([1, 1, 1], dtype=torch.float32)
-                    / torch.sqrt(torch.tensor(3, dtype=torch.float32))
-                ).expand(face_4_normals.size()),
-            )
+        self.assertClose(face_4_verts.sum(1), torch.ones(face_4_verts.size(0)))
+        self.assertClose(
+            face_4_normals,
+            (
+                torch.tensor([1, 1, 1], dtype=torch.float32)
+                / torch.sqrt(torch.tensor(3, dtype=torch.float32))
+            ).expand(face_4_normals.size()),
         )
 
-    def test_mutinomial(self):
+    def test_multinomial(self):
         """
         Confirm that torch.multinomial does not sample elements which have
         zero probability.
@@ -293,6 +246,24 @@ class TestSamplePoints(unittest.TestCase):
                 return False
         return True
 
+    def test_verts_nan(self):
+        num_verts = 30
+        num_faces = 50
+        for device in ["cpu", "cuda:0"]:
+            for invalid in ["nan", "inf"]:
+                verts = torch.rand((num_verts, 3), dtype=torch.float32, device=device)
+                # randomly assign an invalid type
+                verts[torch.randperm(num_verts)[:10]] = float(invalid)
+                faces = torch.randint(
+                    num_verts, size=(num_faces, 3), dtype=torch.int64, device=device
+                )
+                meshes = Meshes(verts=[verts], faces=[faces])
+
+                with self.assertRaisesRegex(ValueError, "Meshes contain nan or inf."):
+                    sample_points_from_meshes(
+                        meshes, num_samples=100, return_normals=True
+                    )
+
     @staticmethod
     def sample_points_with_init(
         num_meshes: int,
@@ -304,9 +275,7 @@ class TestSamplePoints(unittest.TestCase):
         verts_list = []
         faces_list = []
         for _ in range(num_meshes):
-            verts = torch.rand(
-                (num_verts, 3), dtype=torch.float32, device=device
-            )
+            verts = torch.rand((num_verts, 3), dtype=torch.float32, device=device)
             faces = torch.randint(
                 num_verts, size=(num_faces, 3), dtype=torch.int64, device=device
             )

@@ -1,18 +1,19 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
 
 """This module implements utility functions for loading and saving meshes."""
-import numpy as np
-import pathlib
 import struct
 import sys
 import warnings
 from collections import namedtuple
 from typing import Optional, Tuple
+
+import numpy as np
 import torch
+from pytorch3d.io.utils import _check_faces_indices, _make_tensor, _open_file
+
 
 _PlyTypeData = namedtuple("_PlyTypeData", "size struct_char np_type")
 
@@ -25,6 +26,14 @@ _PLY_TYPES = {
     "uint": _PlyTypeData(4, "I", np.uint32),
     "float": _PlyTypeData(4, "f", np.float32),
     "double": _PlyTypeData(8, "d", np.float64),
+    "int8": _PlyTypeData(1, "b", np.byte),
+    "uint8": _PlyTypeData(1, "B", np.ubyte),
+    "int16": _PlyTypeData(2, "h", np.short),
+    "uint16": _PlyTypeData(2, "H", np.ushort),
+    "int32": _PlyTypeData(4, "i", np.int32),
+    "uint32": _PlyTypeData(4, "I", np.uint32),
+    "float32": _PlyTypeData(4, "f", np.float32),
+    "float64": _PlyTypeData(8, "d", np.float64),
 }
 
 _Property = namedtuple("_Property", "name data_type list_size_type")
@@ -83,9 +92,9 @@ class _PlyElementType:
         """
         if not self.is_fixed_size():
             return False
-        first_type = self.properties[0].data_type
+        first_type = _PLY_TYPES[self.properties[0].data_type]
         for property in self.properties:
-            if property.data_type != first_type:
+            if _PLY_TYPES[property.data_type] != first_type:
                 return False
         return True
 
@@ -226,10 +235,17 @@ def _read_ply_fixed_size_element_ascii(f, definition: _PlyElementType):
         values. There is one column for each property.
     """
     np_type = _PLY_TYPES[definition.properties[0].data_type].np_type
-    data = np.loadtxt(
-        f, dtype=np_type, comments=None, ndmin=2, max_rows=definition.count
-    )
-    if data.shape[1] != len(definition.properties):
+    old_offset = f.tell()
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=".* Empty input file.*", category=UserWarning
+        )
+        data = np.loadtxt(
+            f, dtype=np_type, comments=None, ndmin=2, max_rows=definition.count
+        )
+    if not len(data):  # np.loadtxt() seeks even on empty data
+        f.seek(old_offset)
+    if definition.count and data.shape[1] != len(definition.properties):
         raise ValueError("Inconsistent data for %s." % definition.name)
     if data.shape[0] != definition.count:
         raise ValueError("Not enough data for %s." % definition.name)
@@ -251,22 +267,20 @@ def _try_read_ply_constant_list_ascii(f, definition: _PlyElementType):
         data. The rows are the different values. Otherwise None.
     """
     np_type = _PLY_TYPES[definition.properties[0].data_type].np_type
-    start_point = f.tell()
+    old_offset = f.tell()
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore", message=".* Empty input file.*", category=UserWarning
             )
             data = np.loadtxt(
-                f,
-                dtype=np_type,
-                comments=None,
-                ndmin=2,
-                max_rows=definition.count,
+                f, dtype=np_type, comments=None, ndmin=2, max_rows=definition.count
             )
     except ValueError:
-        f.seek(start_point)
+        f.seek(old_offset)
         return None
+    if not len(data):  # np.loadtxt() seeks even on empty data
+        f.seek(old_offset)
     if (data.shape[1] - 1 != data[:, 0]).any():
         msg = "A line of %s data did not have the specified length."
         raise ValueError(msg % definition.name)
@@ -302,9 +316,7 @@ def _parse_heterogenous_property_ascii(datum, line_iter, property: _Property):
             length = int(value)
         except ValueError:
             raise ValueError("A list length was not a number.")
-        list_value = np.zeros(
-            length, dtype=_PLY_TYPES[property.data_type].np_type
-        )
+        list_value = np.zeros(length, dtype=_PLY_TYPES[property.data_type].np_type)
         for i in range(length):
             inner_value = next(line_iter, None)
             if inner_value is None:
@@ -405,8 +417,7 @@ def _read_ply_element_struct(f, definition: _PlyElementType, endian_str: str):
         values. There is one column for each property.
     """
     format = "".join(
-        _PLY_TYPES[property.data_type].struct_char
-        for property in definition.properties
+        _PLY_TYPES[property.data_type].struct_char for property in definition.properties
     )
     format = endian_str + format
     pattern = struct.Struct(format)
@@ -415,10 +426,7 @@ def _read_ply_element_struct(f, definition: _PlyElementType, endian_str: str):
     bytes_data = f.read(needed_bytes)
     if len(bytes_data) != needed_bytes:
         raise ValueError("Not enough data for %s." % definition.name)
-    data = [
-        pattern.unpack_from(bytes_data, i * size)
-        for i in range(definition.count)
-    ]
+    data = [pattern.unpack_from(bytes_data, i * size) for i in range(definition.count)]
     return data
 
 
@@ -451,7 +459,7 @@ def _try_read_ply_constant_list_binary(
         [length] = length_struct.unpack(bytes_data)
         return length
 
-    start_point = f.tell()
+    old_offset = f.tell()
 
     length = get_length()
     np_type = _PLY_TYPES[definition.properties[0].data_type].np_type
@@ -468,7 +476,7 @@ def _try_read_ply_constant_list_binary(
         if i + 1 == definition.count:
             break
         if length != get_length():
-            f.seek(start_point)
+            f.seek(old_offset)
             return None
     if (sys.byteorder == "big") != big_endian:
         output = output.byteswap()
@@ -476,9 +484,7 @@ def _try_read_ply_constant_list_binary(
     return output
 
 
-def _read_ply_element_binary(
-    f, definition: _PlyElementType, big_endian: bool
-) -> list:
+def _read_ply_element_binary(f, definition: _PlyElementType, big_endian: bool) -> list:
     """
     Decode all instances of a single element from a binary .ply file.
 
@@ -516,9 +522,7 @@ def _read_ply_element_binary(
     data = []
     for _i in range(definition.count):
         datum = []
-        for property, property_struct in zip(
-            definition.properties, property_structs
-        ):
+        for property, property_struct in zip(definition.properties, property_structs):
             size = property_struct.size
             initial_data = f.read(size)
             if len(initial_data) != size:
@@ -588,19 +592,8 @@ def _load_ply_raw(f) -> Tuple[_PlyHeader, dict]:
                   uniformly-sized list, then the value will be a 2D numpy array.
                   If not, it is a list of the relevant property values.
     """
-    new_f = False
-    if isinstance(f, str):
-        new_f = True
-        f = open(f, "rb")
-    elif isinstance(f, pathlib.Path):
-        new_f = True
-        f = f.open("rb")
-    try:
+    with _open_file(f, "rb") as f:
         header, elements = _load_ply_raw_stream(f)
-    finally:
-        if new_f:
-            f.close()
-
     return header, elements
 
 
@@ -657,29 +650,25 @@ def load_ply(f):
     if face is None:
         raise ValueError("The ply file has no face element.")
 
-    if (
-        not isinstance(vertex, np.ndarray)
-        or vertex.ndim != 2
-        or vertex.shape[1] != 3
+    if len(vertex) and (
+        not isinstance(vertex, np.ndarray) or vertex.ndim != 2 or vertex.shape[1] != 3
     ):
         raise ValueError("Invalid vertices in file.")
-    verts = torch.tensor(vertex, dtype=torch.float32)
+    verts = _make_tensor(vertex, cols=3, dtype=torch.float32)
 
     face_head = next(head for head in header.elements if head.name == "face")
-    if (
-        len(face_head.properties) != 1
-        or face_head.properties[0].list_size_type is None
-    ):
+    if len(face_head.properties) != 1 or face_head.properties[0].list_size_type is None:
         raise ValueError("Unexpected form of faces data.")
     # face_head.properties[0].name is usually "vertex_index" or "vertex_indices"
     # but we don't need to enforce this.
-    if isinstance(face, np.ndarray) and face.ndim == 2:
+
+    if not len(face):
+        faces = torch.zeros(size=(0, 3), dtype=torch.int64)
+    elif isinstance(face, np.ndarray) and face.ndim == 2:  # Homogeneous elements
         if face.shape[1] < 3:
             raise ValueError("Faces must have at least 3 vertices.")
-        face_arrays = [
-            face[:, [0, i + 1, i + 2]] for i in range(face.shape[1] - 2)
-        ]
-        faces = torch.tensor(np.vstack(face_arrays), dtype=torch.int64)
+        face_arrays = [face[:, [0, i + 1, i + 2]] for i in range(face.shape[1] - 2)]
+        faces = torch.LongTensor(np.vstack(face_arrays))
     else:
         face_list = []
         for face_item in face:
@@ -688,43 +677,76 @@ def load_ply(f):
             if face_item.shape[0] < 3:
                 raise ValueError("Faces must have at least 3 vertices.")
             for i in range(face_item.shape[0] - 2):
-                face_list.append(
-                    [face_item[0], face_item[i + 1], face_item[i + 2]]
-                )
-            faces = torch.tensor(face_list, dtype=torch.int64)
+                face_list.append([face_item[0], face_item[i + 1], face_item[i + 2]])
+        faces = _make_tensor(face_list, cols=3, dtype=torch.int64)
 
+    _check_faces_indices(faces, max_index=verts.shape[0])
     return verts, faces
 
 
-def _save_ply(f, verts, faces, decimal_places: Optional[int]):
+def _save_ply(
+    f,
+    verts: torch.Tensor,
+    faces: torch.LongTensor,
+    verts_normals: torch.Tensor,
+    decimal_places: Optional[int] = None,
+) -> None:
     """
-    Internal implementation for saving a mesh to a .ply file.
+    Internal implementation for saving 3D data to a .ply file.
 
     Args:
-        f: File object to which the mesh should be written.
+        f: File object to which the 3D data should be written.
         verts: FloatTensor of shape (V, 3) giving vertex coordinates.
-        faces: LongTensor of shape (F, 3) giving faces.
+        faces: LongTensor of shsape (F, 3) giving faces.
+        verts_normals: FloatTensor of shape (V, 3) giving vertex normals.
         decimal_places: Number of decimal places for saving.
     """
+    assert not len(verts) or (verts.dim() == 2 and verts.size(1) == 3)
+    assert not len(faces) or (faces.dim() == 2 and faces.size(1) == 3)
+    assert not len(verts_normals) or (
+        verts_normals.dim() == 2 and verts_normals.size(1) == 3
+    )
+
     print("ply\nformat ascii 1.0", file=f)
     print(f"element vertex {verts.shape[0]}", file=f)
     print("property float x", file=f)
     print("property float y", file=f)
     print("property float z", file=f)
+    if verts_normals.numel() > 0:
+        print("property float nx", file=f)
+        print("property float ny", file=f)
+        print("property float nz", file=f)
     print(f"element face {faces.shape[0]}", file=f)
     print("property list uchar int vertex_index", file=f)
     print("end_header", file=f)
+
+    if not (len(verts) or len(faces)):
+        warnings.warn("Empty 'verts' and 'faces' arguments provided")
+        return
 
     if decimal_places is None:
         float_str = "%f"
     else:
         float_str = "%" + ".%df" % decimal_places
 
-    np.savetxt(f, verts.detach().numpy(), float_str)
-    np.savetxt(f, faces.detach().numpy(), "3 %d %d %d")
+    vert_data = torch.cat((verts, verts_normals), dim=1)
+    np.savetxt(f, vert_data.detach().numpy(), float_str)
+
+    faces_array = faces.detach().numpy()
+
+    _check_faces_indices(faces, max_index=verts.shape[0])
+
+    if len(faces_array):
+        np.savetxt(f, faces_array, "3 %d %d %d")
 
 
-def save_ply(f, verts, faces, decimal_places: Optional[int] = None):
+def save_ply(
+    f,
+    verts: torch.Tensor,
+    faces: Optional[torch.LongTensor] = None,
+    verts_normals: Optional[torch.Tensor] = None,
+    decimal_places: Optional[int] = None,
+) -> None:
     """
     Save a mesh to a .ply file.
 
@@ -732,17 +754,32 @@ def save_ply(f, verts, faces, decimal_places: Optional[int] = None):
         f: File (or path) to which the mesh should be written.
         verts: FloatTensor of shape (V, 3) giving vertex coordinates.
         faces: LongTensor of shape (F, 3) giving faces.
+        verts_normals: FloatTensor of shape (V, 3) giving vertex normals.
         decimal_places: Number of decimal places for saving.
     """
-    new_f = False
-    if isinstance(f, str):
-        new_f = True
-        f = open(f, "w")
-    elif isinstance(f, pathlib.Path):
-        new_f = True
-        f = f.open("w")
-    try:
-        _save_ply(f, verts, faces, decimal_places)
-    finally:
-        if new_f:
-            f.close()
+
+    verts_normals = (
+        torch.tensor([], dtype=torch.float32, device=verts.device)
+        if verts_normals is None
+        else verts_normals
+    )
+    faces = torch.LongTensor([]) if faces is None else faces
+
+    if len(verts) and not (verts.dim() == 2 and verts.size(1) == 3):
+        message = "Argument 'verts' should either be empty or of shape (num_verts, 3)."
+        raise ValueError(message)
+
+    if len(faces) and not (faces.dim() == 2 and faces.size(1) == 3):
+        message = "Argument 'faces' should either be empty or of shape (num_faces, 3)."
+        raise ValueError(message)
+
+    if len(verts_normals) and not (
+        verts_normals.dim() == 2
+        and verts_normals.size(1) == 3
+        and verts_normals.size(0) == verts.size(0)
+    ):
+        message = "Argument 'verts_normals' should either be empty or of shape (num_verts, 3)."
+        raise ValueError(message)
+
+    with _open_file(f, "w") as f:
+        _save_ply(f, verts, faces, verts_normals, decimal_places)

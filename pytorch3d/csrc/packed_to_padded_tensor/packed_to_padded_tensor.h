@@ -2,6 +2,7 @@
 
 #pragma once
 #include <torch/extension.h>
+#include "utils/pytorch3d_cutils.h"
 
 // PackedToPadded
 // Converts a packed tensor into a padded tensor, restoring the batch dimension.
@@ -72,8 +73,10 @@ at::Tensor PackedToPadded(
     const at::Tensor inputs_packed,
     const at::Tensor first_idxs,
     const int64_t max_size) {
-  if (inputs_packed.type().is_cuda()) {
+  if (inputs_packed.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(inputs_packed);
+    CHECK_CUDA(first_idxs);
     return PackedToPaddedCuda(inputs_packed, first_idxs, max_size);
 #else
     AT_ERROR("Not compiled with GPU support.");
@@ -87,8 +90,10 @@ at::Tensor PaddedToPacked(
     const at::Tensor inputs_padded,
     const at::Tensor first_idxs,
     const int64_t num_inputs) {
-  if (inputs_padded.type().is_cuda()) {
+  if (inputs_padded.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(inputs_padded);
+    CHECK_CUDA(first_idxs);
     return PaddedToPackedCuda(inputs_padded, first_idxs, num_inputs);
 #else
     AT_ERROR("Not compiled with GPU support.");

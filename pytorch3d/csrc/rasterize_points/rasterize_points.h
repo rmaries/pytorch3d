@@ -4,6 +4,7 @@
 #include <torch/extension.h>
 #include <cstdio>
 #include <tuple>
+#include "utils/pytorch3d_cutils.h"
 
 // ****************************************************************************
 // *                          NAIVE RASTERIZATION                             *
@@ -11,6 +12,8 @@
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsNaiveCpu(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int points_per_pixel);
@@ -19,6 +22,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsNaiveCpu(
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizePointsNaiveCuda(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int points_per_pixel);
@@ -27,16 +32,26 @@ RasterizePointsNaiveCuda(
 // check whether that point hits the pixel.
 //
 // Args:
-//  points: Tensor of shape (N, P, 3) (in NDC)
+//  points: Tensor of shape (P, 3) giving (packed) positions for
+//          points in all N pointclouds in the batch where P is the total
+//          number of points in the batch across all pointclouds. These points
+//          are expected to be in NDC coordinates in the range [-1, 1].
+//  cloud_to_packed_first_idx: LongTensor of shape (N) giving the index in
+//                          points_packed of the first point in each pointcloud
+//                          in the batch where N is the batch size.
+//  num_points_per_cloud: LongTensor of shape (N) giving the number of points
+//                        for each pointcloud in the batch.
 //  radius: Radius of each point (in NDC units)
-//  image_size:  (S) Size of the image to return (in pixels)
+//  image_size: (S) Size of the image to return (in pixels)
 //  points_per_pixel: (K) The number closest of points to return for each pixel
 //
 // Returns:
+//  A 4 element tuple of:
 //  idxs: int32 Tensor of shape (N, S, S, K) giving the indices of the
 //        closest K points along the z-axis for each pixel, padded with -1 for
-//        pixels
-//         hit by fewer than K points.
+//        pixels hit by fewer than K points. The indices refer to points in
+//        points packed i.e a tensor of shape (P, 3) representing the flattened
+//        points for all pointclouds in the batch.
 //  zbuf: float32 Tensor of shape (N, S, S, K) giving the depth of each
 //        closest point for each pixel.
 //  dists: float32 Tensor of shape (N, S, S, K) giving squared Euclidean
@@ -44,19 +59,35 @@ RasterizePointsNaiveCuda(
 //          points along the z axis.
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsNaive(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int points_per_pixel) {
-  if (points.type().is_cuda()) {
+  if (points.is_cuda() && cloud_to_packed_first_idx.is_cuda() &&
+      num_points_per_cloud.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(points);
+    CHECK_CUDA(cloud_to_packed_first_idx);
+    CHECK_CUDA(num_points_per_cloud);
     return RasterizePointsNaiveCuda(
-        points, image_size, radius, points_per_pixel);
+        points,
+        cloud_to_packed_first_idx,
+        num_points_per_cloud,
+        image_size,
+        radius,
+        points_per_pixel);
 #else
     AT_ERROR("Not compiled with GPU support");
 #endif
   } else {
     return RasterizePointsNaiveCpu(
-        points, image_size, radius, points_per_pixel);
+        points,
+        cloud_to_packed_first_idx,
+        num_points_per_cloud,
+        image_size,
+        radius,
+        points_per_pixel);
   }
 }
 
@@ -66,6 +97,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsNaive(
 
 torch::Tensor RasterizePointsCoarseCpu(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int bin_size,
@@ -74,13 +107,23 @@ torch::Tensor RasterizePointsCoarseCpu(
 #ifdef WITH_CUDA
 torch::Tensor RasterizePointsCoarseCuda(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int bin_size,
     const int max_points_per_bin);
 #endif
 // Args:
-//  points: Tensor of shape (N, P, 3)
+//  points: Tensor of shape (P, 3) giving (packed) positions for
+//          points in all N pointclouds in the batch where P is the total
+//          number of points in the batch across all pointclouds. These points
+//          are expected to be in NDC coordinates in the range [-1, 1].
+//  cloud_to_packed_first_idx: LongTensor of shape (N) giving the index in
+//                          points_packed of the first point in each pointcloud
+//                          in the batch where N is the batch size.
+//  num_points_per_cloud: LongTensor of shape (N) giving the number of points
+//                        for each pointcloud in the batch.
 //  radius: Radius of points to rasterize (in NDC units)
 //  image_size: Size of the image to generate (in pixels)
 //  bin_size: Size of each bin within the image (in pixels)
@@ -92,20 +135,38 @@ torch::Tensor RasterizePointsCoarseCuda(
 //              of points that fall into each bin.
 torch::Tensor RasterizePointsCoarse(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int bin_size,
     const int max_points_per_bin) {
-  if (points.type().is_cuda()) {
+  if (points.is_cuda() && cloud_to_packed_first_idx.is_cuda() &&
+      num_points_per_cloud.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(points);
+    CHECK_CUDA(cloud_to_packed_first_idx);
+    CHECK_CUDA(num_points_per_cloud);
     return RasterizePointsCoarseCuda(
-        points, image_size, radius, bin_size, max_points_per_bin);
+        points,
+        cloud_to_packed_first_idx,
+        num_points_per_cloud,
+        image_size,
+        radius,
+        bin_size,
+        max_points_per_bin);
 #else
     AT_ERROR("Not compiled with GPU support");
 #endif
   } else {
     return RasterizePointsCoarseCpu(
-        points, image_size, radius, bin_size, max_points_per_bin);
+        points,
+        cloud_to_packed_first_idx,
+        num_points_per_cloud,
+        image_size,
+        radius,
+        bin_size,
+        max_points_per_bin);
   }
 }
 
@@ -123,7 +184,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsFineCuda(
     const int points_per_pixel);
 #endif
 // Args:
-//  points: float32 Tensor of shape (N, P, 3)
+//  points: Tensor of shape (P, 3) giving (packed) positions for
+//          points in all N pointclouds in the batch where P is the total
+//          number of points in the batch across all pointclouds. These points
+//          are expected to be in NDC coordinates in the range [-1, 1].
 //  bin_points: int32 Tensor of shape (N, B, B, M) giving the indices of points
 //              that fall into each bin (output from coarse rasterization)
 //  image_size: Size of image to generate (in pixels)
@@ -132,9 +196,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsFineCuda(
 //  points_per_pixel: How many points to rasterize for each pixel
 //
 // Returns (same as rasterize_points):
-//  idxs: int32 Tensor of shape (N, S, S, K) giving the indices of the closest
-//        points_per_pixel points along the z-axis for each pixel, padded with
-//        -1 for pixels hit by fewer than points_per_pixel points
+//  idxs: int32 Tensor of shape (N, S, S, K) giving the indices of the
+//        closest K points along the z-axis for each pixel, padded with -1 for
+//        pixels hit by fewer than K points. The indices refer to points in
+//        points packed i.e a tensor of shape (P, 3) representing the flattened
+//        points for all pointclouds in the batch.
 //  zbuf: float32 Tensor of shape (N, S, S, K) giving the depth of each of each
 //        closest point for each pixel
 //  dists: float32 Tensor of shape (N, S, S, K) giving squared Euclidean
@@ -147,8 +213,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsFine(
     const float radius,
     const int bin_size,
     const int points_per_pixel) {
-  if (points.type().is_cuda()) {
+  if (points.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(points);
+    CHECK_CUDA(bin_points);
     return RasterizePointsFineCuda(
         points, bin_points, image_size, radius, bin_size, points_per_pixel);
 #else
@@ -177,7 +245,10 @@ torch::Tensor RasterizePointsBackwardCuda(
     const torch::Tensor& grad_dists);
 #endif
 // Args:
-//  points: float32 Tensor of shape (N, P, 3)
+//  points: Tensor of shape (P, 3) giving (packed) positions for
+//          points in all N pointclouds in the batch where P is the total
+//          number of points in the batch across all pointclouds. These points
+//          are expected to be in NDC coordinates in the range [-1, 1].
 //  idxs: int32 Tensor of shape (N, H, W, K) (from forward pass)
 //  grad_zbuf: float32 Tensor of shape (N, H, W, K) giving upstream gradient
 //             d(loss)/d(zbuf) of the distances from each pixel to its nearest
@@ -193,8 +264,12 @@ torch::Tensor RasterizePointsBackward(
     const torch::Tensor& idxs,
     const torch::Tensor& grad_zbuf,
     const torch::Tensor& grad_dists) {
-  if (points.type().is_cuda()) {
+  if (points.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(points);
+    CHECK_CUDA(idxs);
+    CHECK_CUDA(grad_zbuf);
+    CHECK_CUDA(grad_dists);
     return RasterizePointsBackwardCuda(points, idxs, grad_zbuf, grad_dists);
 #else
     AT_ERROR("Not compiled with GPU support");
@@ -212,7 +287,15 @@ torch::Tensor RasterizePointsBackward(
 // it uses either naive or coarse-to-fine rasterization based on bin_size.
 //
 // Args:
-//  points: Tensor of shape (N, P, 3) (in NDC)
+//  points: Tensor of shape (P, 3) giving (packed) positions for
+//          points in all N pointclouds in the batch where P is the total
+//          number of points in the batch across all pointclouds. These points
+//          are expected to be in NDC coordinates in the range [-1, 1].
+//  cloud_to_packed_first_idx: LongTensor of shape (N) giving the index in
+//                          points_packed of the first point in each pointcloud
+//                          in the batch where N is the batch size.
+//  num_points_per_cloud: LongTensor of shape (N) giving the number of points
+//                        for each pointcloud in the batch.
 //  radius: Radius of each point (in NDC units)
 //  image_size:  (S) Size of the image to return (in pixels)
 //  points_per_pixel: (K) The number of points to return for each pixel
@@ -223,8 +306,10 @@ torch::Tensor RasterizePointsBackward(
 //
 // Returns:
 //  idxs: int32 Tensor of shape (N, S, S, K) giving the indices of the
-//        closest points_per_pixel points along the z-axis for each pixel,
-//        padded with -1 for pixels hit by fewer than points_per_pixel points
+//        closest K points along the z-axis for each pixel, padded with -1 for
+//        pixels hit by fewer than K points. The indices refer to points in
+//        points packed i.e a tensor of shape (P, 3) representing the flattened
+//        points for all pointclouds in the batch.
 //  zbuf: float32 Tensor of shape (N, S, S, K) giving the depth of each of each
 //        closest point for each pixel
 //  dists: float32 Tensor of shape (N, S, S, K) giving squared Euclidean
@@ -232,6 +317,8 @@ torch::Tensor RasterizePointsBackward(
 //         points along the z axis.
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePoints(
     const torch::Tensor& points,
+    const torch::Tensor& cloud_to_packed_first_idx,
+    const torch::Tensor& num_points_per_cloud,
     const int image_size,
     const float radius,
     const int points_per_pixel,
@@ -239,11 +326,23 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePoints(
     const int max_points_per_bin) {
   if (bin_size == 0) {
     // Use the naive per-pixel implementation
-    return RasterizePointsNaive(points, image_size, radius, points_per_pixel);
+    return RasterizePointsNaive(
+        points,
+        cloud_to_packed_first_idx,
+        num_points_per_cloud,
+        image_size,
+        radius,
+        points_per_pixel);
   } else {
     // Use coarse-to-fine rasterization
     const auto bin_points = RasterizePointsCoarse(
-        points, image_size, radius, bin_size, max_points_per_bin);
+        points,
+        cloud_to_packed_first_idx,
+        num_points_per_cloud,
+        image_size,
+        radius,
+        bin_size,
+        max_points_per_bin);
     return RasterizePointsFine(
         points, bin_points, image_size, radius, bin_size, points_per_pixel);
   }

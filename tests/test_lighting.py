@@ -1,14 +1,12 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
-import numpy as np
 import unittest
-import torch
 
+import numpy as np
+import torch
+from common_testing import TestCaseMixin
 from pytorch3d.renderer.lighting import DirectionalLights, PointLights
 from pytorch3d.transforms import RotateAxisAngle
-
-from common_testing import TestCaseMixin
 
 
 class TestLights(TestCaseMixin, unittest.TestCase):
@@ -57,22 +55,16 @@ class TestLights(TestCaseMixin, unittest.TestCase):
             self.assertSeparate(new_prop, prop)
 
     def test_lights_accessor(self):
-        d_light = DirectionalLights(
-            ambient_color=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
-        )
+        d_light = DirectionalLights(ambient_color=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
         p_light = PointLights(ambient_color=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
         for light in [d_light, p_light]:
             # Update element
             color = (0.5, 0.5, 0.5)
             light[1].ambient_color = color
-            self.assertTrue(
-                torch.allclose(light.ambient_color[1], torch.tensor(color))
-            )
+            self.assertClose(light.ambient_color[1], torch.tensor(color))
             # Get item and get value
             l0 = light[0]
-            self.assertTrue(
-                torch.allclose(l0.ambient_color, torch.tensor((0.0, 0.0, 0.0)))
-            )
+            self.assertClose(l0.ambient_color, torch.tensor((0.0, 0.0, 0.0)))
 
     def test_initialize_lights_broadcast(self):
         light = DirectionalLights(
@@ -101,14 +93,12 @@ class TestLights(TestCaseMixin, unittest.TestCase):
         """
         with self.assertRaises(ValueError):
             DirectionalLights(
-                ambient_color=torch.randn(10, 3),
-                diffuse_color=torch.randn(15, 3),
+                ambient_color=torch.randn(10, 3), diffuse_color=torch.randn(15, 3)
             )
 
         with self.assertRaises(ValueError):
             PointLights(
-                ambient_color=torch.randn(10, 3),
-                diffuse_color=torch.randn(15, 3),
+                ambient_color=torch.randn(10, 3), diffuse_color=torch.randn(15, 3)
             )
 
     def test_initialize_lights_dimensions_fail(self):
@@ -128,7 +118,7 @@ class TestLights(TestCaseMixin, unittest.TestCase):
             PointLights(location=torch.randn(10, 4))
 
 
-class TestDiffuseLighting(unittest.TestCase):
+class TestDiffuseLighting(TestCaseMixin, unittest.TestCase):
     def test_diffuse_directional_lights(self):
         """
         Test with a single point where:
@@ -143,20 +133,19 @@ class TestDiffuseLighting(unittest.TestCase):
         normals = torch.tensor([0, 0, 1], dtype=torch.float32)
         normals = normals[None, None, :]
         expected_output = torch.tensor(
-            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)],
-            dtype=torch.float32,
+            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=torch.float32
         )
-        expected_output = expected_output.view(-1, 1, 3)
+        expected_output = expected_output.view(1, 1, 3).repeat(3, 1, 1)
         light = DirectionalLights(diffuse_color=color, direction=direction)
         output_light = light.diffuse(normals=normals)
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
         # Change light direction to be 90 degrees apart from normal direction.
         direction = torch.tensor([0, 1, 0], dtype=torch.float32)
         light.direction = direction
         expected_output = torch.zeros_like(expected_output)
         output_light = light.diffuse(normals=normals)
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
     def test_diffuse_point_lights(self):
         """
@@ -174,28 +163,23 @@ class TestDiffuseLighting(unittest.TestCase):
         points = torch.tensor([0, 0, 0], dtype=torch.float32)
         normals = torch.tensor([0, 0, 1], dtype=torch.float32)
         expected_output = torch.tensor(
-            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)],
-            dtype=torch.float32,
+            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=torch.float32
         )
         expected_output = expected_output.view(-1, 1, 3)
-        light = PointLights(
-            diffuse_color=color[None, :], location=location[None, :]
-        )
+        light = PointLights(diffuse_color=color[None, :], location=location[None, :])
         output_light = light.diffuse(
             points=points[None, None, :], normals=normals[None, None, :]
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
         # Change light direction to be 90 degrees apart from normal direction.
         location = torch.tensor([0, 1, 0], dtype=torch.float32)
         expected_output = torch.zeros_like(expected_output)
-        light = PointLights(
-            diffuse_color=color[None, :], location=location[None, :]
-        )
+        light = PointLights(diffuse_color=color[None, :], location=location[None, :])
         output_light = light.diffuse(
             points=points[None, None, :], normals=normals[None, None, :]
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
     def test_diffuse_batched(self):
         """
@@ -209,8 +193,7 @@ class TestDiffuseLighting(unittest.TestCase):
         )
         normals = torch.tensor([0, 0, 1], dtype=torch.float32)
         expected_out = torch.tensor(
-            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)],
-            dtype=torch.float32,
+            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=torch.float32
         )
 
         # Reshape
@@ -221,7 +204,7 @@ class TestDiffuseLighting(unittest.TestCase):
 
         lights = DirectionalLights(diffuse_color=color, direction=direction)
         output_light = lights.diffuse(normals=normals)
-        self.assertTrue(torch.allclose(output_light, expected_out))
+        self.assertClose(output_light, expected_out)
 
     def test_diffuse_batched_broadcast_inputs(self):
         """
@@ -236,8 +219,7 @@ class TestDiffuseLighting(unittest.TestCase):
         )
         normals = torch.tensor([0, 0, 1], dtype=torch.float32)
         expected_out = torch.tensor(
-            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)],
-            dtype=torch.float32,
+            [1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=torch.float32
         )
 
         # Reshape
@@ -251,7 +233,7 @@ class TestDiffuseLighting(unittest.TestCase):
 
         lights = DirectionalLights(diffuse_color=color, direction=direction)
         output_light = lights.diffuse(normals=normals)
-        self.assertTrue(torch.allclose(output_light, expected_out))
+        self.assertClose(output_light, expected_out)
 
     def test_diffuse_batched_arbitrary_input_dims(self):
         """
@@ -263,9 +245,7 @@ class TestDiffuseLighting(unittest.TestCase):
         device = torch.device("cuda:0")
         color = torch.tensor([1, 1, 1], dtype=torch.float32, device=device)
         direction = torch.tensor(
-            [0, 1 / np.sqrt(2), 1 / np.sqrt(2)],
-            dtype=torch.float32,
-            device=device,
+            [0, 1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=torch.float32, device=device
         )
         normals = torch.tensor([0, 0, 1], dtype=torch.float32, device=device)
         normals = normals.view(1, 1, 1, 1, 3).expand(N, H, W, K, -1)
@@ -281,7 +261,7 @@ class TestDiffuseLighting(unittest.TestCase):
 
         lights = DirectionalLights(diffuse_color=color, direction=direction)
         output_light = lights.diffuse(normals=normals)
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
     def test_diffuse_batched_packed(self):
         """
@@ -312,10 +292,10 @@ class TestDiffuseLighting(unittest.TestCase):
             direction=direction[mesh_to_vert_idx, :],
         )
         output_light = lights.diffuse(normals=normals[mesh_to_vert_idx, :])
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
 
-class TestSpecularLighting(unittest.TestCase):
+class TestSpecularLighting(TestCaseMixin, unittest.TestCase):
     def test_specular_directional_lights(self):
         """
         Specular highlights depend on the camera position as well as the light
@@ -338,7 +318,7 @@ class TestSpecularLighting(unittest.TestCase):
         points = torch.tensor([0, 0, 0], dtype=torch.float32)
         normals = torch.tensor([0, 1, 0], dtype=torch.float32)
         expected_output = torch.tensor([1.0, 0.0, 1.0], dtype=torch.float32)
-        expected_output = expected_output.view(-1, 1, 3)
+        expected_output = expected_output.view(1, 1, 3).repeat(3, 1, 1)
         lights = DirectionalLights(specular_color=color, direction=direction)
         output_light = lights.specular(
             points=points[None, None, :],
@@ -346,7 +326,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position[None, :],
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
         # Change camera position to be behind the point.
         camera_position = torch.tensor(
@@ -359,7 +339,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position[None, :],
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
     def test_specular_point_lights(self):
         """
@@ -378,16 +358,14 @@ class TestSpecularLighting(unittest.TestCase):
         normals = torch.tensor([0, 1, 0], dtype=torch.float32)
         expected_output = torch.tensor([1.0, 0.0, 1.0], dtype=torch.float32)
         expected_output = expected_output.view(-1, 1, 3)
-        lights = PointLights(
-            specular_color=color[None, :], location=location[None, :]
-        )
+        lights = PointLights(specular_color=color[None, :], location=location[None, :])
         output_light = lights.specular(
             points=points[None, None, :],
             normals=normals[None, None, :],
             camera_position=camera_position[None, :],
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
         # Change camera position to be behind the point
         camera_position = torch.tensor(
@@ -400,7 +378,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position[None, :],
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
         # Change camera direction to be 30 degrees from the reflection direction
         camera_position = torch.tensor(
@@ -419,7 +397,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position[None, :],
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_output ** 10))
+        self.assertClose(output_light, expected_output ** 10)
 
     def test_specular_batched(self):
         batch_size = 10
@@ -449,7 +427,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position,
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_out))
+        self.assertClose(output_light, expected_out)
 
     def test_specular_batched_broadcast_inputs(self):
         batch_size = 10
@@ -482,7 +460,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position,
             shininess=torch.tensor(10),
         )
-        self.assertTrue(torch.allclose(output_light, expected_out))
+        self.assertClose(output_light, expected_out)
 
     def test_specular_batched_arbitrary_input_dims(self):
         """
@@ -491,7 +469,7 @@ class TestSpecularLighting(unittest.TestCase):
         top K faces per pixel.
         """
         device = torch.device("cuda:0")
-        N, H, W, K = 16, 256, 256, 100
+        N, H, W, K = 8, 128, 128, 100
         color = torch.tensor([1, 0, 1], dtype=torch.float32, device=device)
         direction = torch.tensor(
             [-1 / np.sqrt(2), 1 / np.sqrt(2), 0], dtype=torch.float32
@@ -521,7 +499,7 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position,
             shininess=10.0,
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)
 
     def test_specular_batched_packed(self):
         """
@@ -533,8 +511,7 @@ class TestSpecularLighting(unittest.TestCase):
         mesh_to_vert_idx = torch.tensor(mesh_to_vert_idx, dtype=torch.int64)
         color = torch.tensor([[1, 1, 1], [1, 0, 1]], dtype=torch.float32)
         direction = torch.tensor(
-            [[-1 / np.sqrt(2), 1 / np.sqrt(2), 0], [-1, 1, 0]],
-            dtype=torch.float32,
+            [[-1 / np.sqrt(2), 1 / np.sqrt(2), 0], [-1, 1, 0]], dtype=torch.float32
         )
         camera_position = torch.tensor(
             [
@@ -558,4 +535,4 @@ class TestSpecularLighting(unittest.TestCase):
             camera_position=camera_position[mesh_to_vert_idx, :],
             shininess=10.0,
         )
-        self.assertTrue(torch.allclose(output_light, expected_output))
+        self.assertClose(output_light, expected_output)

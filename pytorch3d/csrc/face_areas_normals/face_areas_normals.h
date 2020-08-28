@@ -3,6 +3,7 @@
 #pragma once
 #include <torch/extension.h>
 #include <tuple>
+#include "utils/pytorch3d_cutils.h"
 
 // Compute areas of mesh faces using packed representation.
 //
@@ -44,8 +45,10 @@ at::Tensor FaceAreasNormalsBackwardCuda(
 std::tuple<at::Tensor, at::Tensor> FaceAreasNormalsForward(
     const at::Tensor verts,
     const at::Tensor faces) {
-  if (verts.type().is_cuda() && faces.type().is_cuda()) {
+  if (verts.is_cuda() && faces.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(verts);
+    CHECK_CUDA(faces);
     return FaceAreasNormalsForwardCuda(verts, faces);
 #else
     AT_ERROR("Not compiled with GPU support.");
@@ -60,8 +63,12 @@ at::Tensor FaceAreasNormalsBackward(
     const at::Tensor grad_normals,
     const at::Tensor verts,
     const at::Tensor faces) {
-  if (verts.type().is_cuda() && faces.type().is_cuda()) {
+  if (verts.is_cuda() && faces.is_cuda()) {
 #ifdef WITH_CUDA
+    CHECK_CUDA(verts);
+    CHECK_CUDA(faces);
+    CHECK_CUDA(grad_areas);
+    CHECK_CUDA(grad_normals);
     return FaceAreasNormalsBackwardCuda(grad_areas, grad_normals, verts, faces);
 #else
     AT_ERROR("Not compiled with GPU support.");

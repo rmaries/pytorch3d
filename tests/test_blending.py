@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
-import numpy as np
 import unittest
-import torch
 
+import torch
+from common_testing import TestCaseMixin
 from pytorch3d.renderer.blending import (
     BlendParams,
     hard_rgb_blend,
@@ -41,12 +40,20 @@ def sigmoid_blend_naive_loop(colors, fragments, blend_params):
                 pixel_colors[n, h, w, :3] = colors[n, h, w, 0, :]
                 pixel_colors[n, h, w, 3] = 1.0 - alpha
 
-    return torch.flip(pixel_colors, [1])
+    return pixel_colors
 
 
-def sigmoid_blend_naive_loop_backward(
-    grad_images, images, fragments, blend_params
-):
+def sigmoid_alpha_blend_vectorized(colors, fragments, blend_params) -> torch.Tensor:
+    N, H, W, K = fragments.pix_to_face.shape
+    pixel_colors = torch.ones((N, H, W, 4), dtype=colors.dtype, device=colors.device)
+    mask = fragments.pix_to_face >= 0
+    prob = torch.sigmoid(-fragments.dists / blend_params.sigma) * mask
+    pixel_colors[..., :3] = colors[..., 0, :]
+    pixel_colors[..., 3] = 1.0 - torch.prod((1.0 - prob), dim=-1)
+    return pixel_colors
+
+
+def sigmoid_blend_naive_loop_backward(grad_images, images, fragments, blend_params):
     pix_to_face = fragments.pix_to_face
     dists = fragments.dists
     sigma = blend_params.sigma
@@ -54,8 +61,6 @@ def sigmoid_blend_naive_loop_backward(
     N, H, W, K = pix_to_face.shape
     device = pix_to_face.device
     grad_distances = torch.zeros((N, H, W, K), dtype=dists.dtype, device=device)
-    images = torch.flip(images, [1])
-    grad_images = torch.flip(grad_images, [1])
 
     for n in range(N):
         for h in range(H):
@@ -91,21 +96,18 @@ def softmax_blend_naive(colors, fragments, blend_params):
     # Near and far clipping planes
     zfar = 100.0
     znear = 1.0
+    eps = 1e-10
 
     bk_color = blend_params.background_color
     if not torch.is_tensor(bk_color):
         bk_color = torch.tensor(bk_color, dtype=colors.dtype, device=device)
-
-    # Background color component
-    delta = np.exp(1e-10 / gamma) * 1e-10
-    delta = torch.tensor(delta).to(device=device)
 
     for n in range(N):
         for h in range(H):
             for w in range(W):
                 alpha = 1.0
                 weights_k = torch.zeros(K, device=device)
-                zmax = 0.0
+                zmax = torch.tensor(0.0, device=device)
 
                 # Loop over K to find max z.
                 for k in range(K):
@@ -123,34 +125,28 @@ def softmax_blend_naive(colors, fragments, blend_params):
                         alpha *= 1.0 - prob  # cumulative product
                         weights_k[k] = prob * torch.exp((zinv - zmax) / gamma)
 
+                # Clamp to ensure delta is never 0
+                delta = torch.exp((eps - zmax) / blend_params.gamma).clamp(min=eps)
+                delta = delta.to(device)
                 denom = weights_k.sum() + delta
-                weights = weights_k / denom
-                cols = (weights[..., None] * colors[n, h, w, :, :]).sum(dim=0)
-                pixel_colors[n, h, w, :3] = cols
-                pixel_colors[n, h, w, :3] += (delta / denom) * bk_color
+                cols = (weights_k[..., None] * colors[n, h, w, :, :]).sum(dim=0)
+                pixel_colors[n, h, w, :3] = cols + delta * bk_color
+                pixel_colors[n, h, w, :3] /= denom
                 pixel_colors[n, h, w, 3] = 1.0 - alpha
 
-    return torch.flip(pixel_colors, [1])
+    return pixel_colors
 
 
-class TestBlending(unittest.TestCase):
+class TestBlending(TestCaseMixin, unittest.TestCase):
     def setUp(self) -> None:
         torch.manual_seed(42)
 
     def _compare_impls(
-        self,
-        fn1,
-        fn2,
-        args1,
-        args2,
-        grad_var1=None,
-        grad_var2=None,
-        compare_grads=True,
+        self, fn1, fn2, args1, args2, grad_var1=None, grad_var2=None, compare_grads=True
     ):
-
         out1 = fn1(*args1)
         out2 = fn2(*args2)
-        self.assertTrue(torch.allclose(out1.cpu(), out2.cpu(), atol=1e-7))
+        self.assertClose(out1.cpu()[..., 3], out2.cpu()[..., 3], atol=1e-7)
 
         # Check gradients
         if not compare_grads:
@@ -162,15 +158,12 @@ class TestBlending(unittest.TestCase):
 
         (out2 * grad_out).sum().backward()
         self.assertTrue(hasattr(grad_var2, "grad"))
-        self.assertTrue(
-            torch.allclose(
-                grad_var1.grad.cpu(), grad_var2.grad.cpu(), atol=2e-5
-            )
-        )
+
+        self.assertClose(grad_var1.grad.cpu(), grad_var2.grad.cpu(), atol=2e-5)
 
     def test_hard_rgb_blend(self):
         N, H, W, K = 5, 10, 10, 20
-        pix_to_face = torch.ones((N, H, W, K))
+        pix_to_face = torch.randint(low=-1, high=100, size=(N, H, W, K))
         bary_coords = torch.ones((N, H, W, K, 3))
         fragments = Fragments(
             pix_to_face=pix_to_face,
@@ -178,14 +171,21 @@ class TestBlending(unittest.TestCase):
             zbuf=pix_to_face,  # dummy
             dists=pix_to_face,  # dummy
         )
-        colors = bary_coords.clone()
-        top_k = torch.randn((K, 3))
-        colors[..., :, :] = top_k
-        images = hard_rgb_blend(colors, fragments)
-        expected_vals = torch.ones((N, H, W, 4))
-        pix_cols = torch.ones_like(expected_vals[..., :3]) * top_k[0, :]
-        expected_vals[..., :3] = pix_cols
-        self.assertTrue(torch.allclose(images, expected_vals))
+        colors = torch.randn((N, H, W, K, 3))
+        blend_params = BlendParams(1e-4, 1e-4, (0.5, 0.5, 1))
+        images = hard_rgb_blend(colors, fragments, blend_params)
+
+        # Examine if the foreground colors are correct.
+        is_foreground = pix_to_face[..., 0] >= 0
+        self.assertClose(images[is_foreground][:, :3], colors[is_foreground][..., 0, :])
+
+        # Examine if the background colors are correct.
+        for i in range(3):  # i.e. RGB
+            channel_color = blend_params.background_color[i]
+            self.assertTrue(images[~is_foreground][..., i].eq(channel_color).all())
+
+        # Examine the alpha channel is correct
+        self.assertTrue(images[..., 3].eq(1).all())
 
     def test_sigmoid_alpha_blend_manual_gradients(self):
         # Create dummy outputs of rasterization
@@ -202,9 +202,7 @@ class TestBlending(unittest.TestCase):
         # # (-) means inside triangle, (+) means outside triangle.
         random_sign_flip = torch.rand((N, S, S, K))
         random_sign_flip[random_sign_flip > 0.5] *= -1.0
-        dists = torch.randn(
-            size=(N, S, S, K), requires_grad=True, device=device
-        )
+        dists = torch.randn(size=(N, S, S, K), requires_grad=True, device=device)
         fragments = Fragments(
             pix_to_face=pix_to_face,
             bary_coords=empty,  # dummy
@@ -231,20 +229,15 @@ class TestBlending(unittest.TestCase):
         torch.manual_seed(231)
         F = 32  # number of faces in the mesh
         # The python loop version is really slow so only using small input sizes.
-        N, S, K = 2, 10, 5
+        N, S, K = 1, 4, 1
         device = torch.device("cuda")
-        pix_to_face = torch.randint(F + 1, size=(N, S, S, K), device=device) - 1
+        pix_to_face = torch.randint(low=-1, high=F, size=(N, S, S, K), device=device)
         colors = torch.randn((N, S, S, K, 3), device=device)
         empty = torch.tensor([], device=device)
 
-        # # randomly flip the sign of the distance
-        # # (-) means inside triangle, (+) means outside triangle.
-        random_sign_flip = torch.rand((N, S, S, K))
-        random_sign_flip[random_sign_flip > 0.5] *= -1.0
-        dists1 = torch.randn(
-            size=(N, S, S, K), requires_grad=True, device=device
-        )
-        dists2 = dists1.detach().clone()
+        dists1 = torch.randn(size=(N, S, S, K), device=device)
+        dists2 = dists1.clone()
+        dists1.requires_grad = True
         dists2.requires_grad = True
 
         fragments1 = Fragments(
@@ -266,7 +259,7 @@ class TestBlending(unittest.TestCase):
 
         self._compare_impls(
             sigmoid_alpha_blend,
-            sigmoid_blend_naive_loop,
+            sigmoid_alpha_blend_vectorized,
             args1,
             args2,
             dists1,
@@ -275,12 +268,12 @@ class TestBlending(unittest.TestCase):
         )
 
     def test_softmax_rgb_blend(self):
-        # Create dummy outputs of rasterization simulating a cube in the centre
+        # Create dummy outputs of rasterization simulating a cube in the center
         # of the image with surrounding padded values.
         N, S, K = 1, 8, 2
         device = torch.device("cuda")
-        pix_to_face = -torch.ones(
-            (N, S, S, K), dtype=torch.int64, device=device
+        pix_to_face = torch.full(
+            (N, S, S, K), fill_value=-1, dtype=torch.int64, device=device
         )
         h = int(S / 2)
         pix_to_face_full = torch.randint(
@@ -297,9 +290,7 @@ class TestBlending(unittest.TestCase):
 
         # randomly flip the sign of the distance
         # (-) means inside triangle, (+) means outside triangle.
-        dists1 = (
-            torch.randn(size=(N, S, S, K), device=device) * random_sign_flip
-        )
+        dists1 = torch.randn(size=(N, S, S, K), device=device) * random_sign_flip
         dists2 = dists1.clone()
         zbuf2 = zbuf1.clone()
         dists1.requires_grad = True
@@ -336,29 +327,22 @@ class TestBlending(unittest.TestCase):
         num_meshes: int = 16,
         image_size: int = 128,
         faces_per_pixel: int = 100,
-        device: str = "cpu",
+        device="cuda",
+        backend: str = "pytorch",
     ):
-        if torch.cuda.is_available() and "cuda:" in device:
-            # If a device other than the default is used, set the device explicity.
-            torch.cuda.set_device(device)
-
         device = torch.device(device)
         torch.manual_seed(231)
 
         # Create dummy outputs of rasterization
         N, S, K = num_meshes, image_size, faces_per_pixel
         F = 32  # num faces in the mesh
-        pix_to_face = torch.randint(F + 1, size=(N, S, S, K), device=device) - 1
+        pix_to_face = torch.randint(
+            low=-1, high=F + 1, size=(N, S, S, K), device=device
+        )
         colors = torch.randn((N, S, S, K, 3), device=device)
         empty = torch.tensor([], device=device)
 
-        # # randomly flip the sign of the distance
-        # # (-) means inside triangle, (+) means outside triangle.
-        random_sign_flip = torch.rand((N, S, S, K), device=device)
-        random_sign_flip[random_sign_flip > 0.5] *= -1.0
-        dists1 = torch.randn(
-            size=(N, S, S, K), requires_grad=True, device=device
-        )
+        dists1 = torch.randn(size=(N, S, S, K), requires_grad=True, device=device)
         fragments = Fragments(
             pix_to_face=pix_to_face,
             bary_coords=empty,  # dummy
@@ -366,11 +350,18 @@ class TestBlending(unittest.TestCase):
             dists=dists1,
         )
         blend_params = BlendParams(sigma=1e-3)
+
+        blend_fn = (
+            sigmoid_alpha_blend_vectorized
+            if backend == "pytorch"
+            else sigmoid_alpha_blend
+        )
+
         torch.cuda.synchronize()
 
         def fn():
             # test forward and backward pass
-            images = sigmoid_alpha_blend(colors, fragments, blend_params)
+            images = blend_fn(colors, fragments, blend_params)
             images.sum().backward()
             torch.cuda.synchronize()
 
@@ -382,6 +373,7 @@ class TestBlending(unittest.TestCase):
         image_size: int = 128,
         faces_per_pixel: int = 100,
         device: str = "cpu",
+        backend: str = "pytorch",
     ):
         if torch.cuda.is_available() and "cuda:" in device:
             # If a device other than the default is used, set the device explicity.
@@ -393,23 +385,16 @@ class TestBlending(unittest.TestCase):
         # Create dummy outputs of rasterization
         N, S, K = num_meshes, image_size, faces_per_pixel
         F = 32  # num faces in the mesh
-        pix_to_face = torch.randint(F + 1, size=(N, S, S, K), device=device) - 1
+        pix_to_face = torch.randint(
+            low=-1, high=F + 1, size=(N, S, S, K), device=device
+        )
         colors = torch.randn((N, S, S, K, 3), device=device)
         empty = torch.tensor([], device=device)
 
-        # # randomly flip the sign of the distance
-        # # (-) means inside triangle, (+) means outside triangle.
-        random_sign_flip = torch.rand((N, S, S, K), device=device)
-        random_sign_flip[random_sign_flip > 0.5] *= -1.0
-        dists1 = torch.randn(
-            size=(N, S, S, K), requires_grad=True, device=device
-        )
+        dists1 = torch.randn(size=(N, S, S, K), requires_grad=True, device=device)
         zbuf = torch.randn(size=(N, S, S, K), requires_grad=True, device=device)
         fragments = Fragments(
-            pix_to_face=pix_to_face,
-            bary_coords=empty,  # dummy
-            zbuf=zbuf,
-            dists=dists1,
+            pix_to_face=pix_to_face, bary_coords=empty, zbuf=zbuf, dists=dists1  # dummy
         )
         blend_params = BlendParams(sigma=1e-3)
 
@@ -424,7 +409,7 @@ class TestBlending(unittest.TestCase):
         return fn
 
     def test_blend_params(self):
-        """Test colour parameter of BlendParams().
+        """Test color parameter of BlendParams().
             Assert passed value overrides default value.
             """
         bp_default = BlendParams()

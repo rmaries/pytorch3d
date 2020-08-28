@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 # flake8: noqa
 
@@ -21,6 +21,7 @@ from recommonmark.parser import CommonMarkParser
 from recommonmark.states import DummyStateMachine
 from sphinx.builders.html import StandaloneHTMLBuilder
 from sphinx.ext.autodoc import between
+
 
 # Monkey patch to fix recommonmark 0.4 doc reference issues.
 orig_run_role = DummyStateMachine.run_role
@@ -81,7 +82,7 @@ copyright = "2019, facebookresearch"
 author = "facebookresearch"
 
 # The short X.Y version
-version = "0.1"
+version = "0.2.0"
 
 # The full version, including alpha/beta/rc tags
 release = version
@@ -154,9 +155,7 @@ html_theme_options = {"collapse_navigation": True}
 def url_resolver(url):
     if ".html" not in url:
         url = url.replace("../", "")
-        return (
-            "https://github.com/facebookresearch/pytorch3d/blob/master/" + url
-        )
+        return "https://github.com/facebookresearch/pytorch3d/blob/master/" + url
     else:
         if DEPLOY:
             return "http://pytorch3d.readthedocs.io/" + url
@@ -188,9 +187,7 @@ def setup(app):
 
     # Register a sphinx.ext.autodoc.between listener to ignore everything
     # between lines that contain the word IGNORE
-    app.connect(
-        "autodoc-process-docstring", between("^.*IGNORE.*$", exclude=True)
-    )
+    app.connect("autodoc-process-docstring", between("^.*IGNORE.*$", exclude=True))
     app.add_transform(AutoStructify)
 
     return app

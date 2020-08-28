@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All rights reserved.
 
 
 import unittest
-import torch
 
+import torch
 from pytorch3d.renderer.mesh.utils import _clip_barycentric_coordinates
 
 
